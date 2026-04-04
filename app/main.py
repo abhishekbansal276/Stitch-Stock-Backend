@@ -120,7 +120,10 @@ async def create_stock(
         
         return {"message": "Stock created successfully", "stock_item_ids": item_ids}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Creation failed: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        # Return 400 instead of 500 so Render proxy doesn't potentially drop the body
+        raise HTTPException(status_code=400, detail=f"Creation failed: {str(e)}")
 
 @app.get("/stock/{stock_item_id}")
 async def get_stock_item(

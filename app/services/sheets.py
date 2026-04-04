@@ -341,7 +341,11 @@ class SheetsService:
             # Sync to Summary
             item = self.get_stock_item(stock_item_id)
             if item:
-                self._update_summary(item['product_code'], item['item_name'], abs(qty), item['unit'], type)
+                try:
+                    qty_float = float(qty)
+                except (ValueError, TypeError):
+                    qty_float = 0.0
+                self._update_summary(item['product_code'], item['item_name'], abs(qty_float), item['unit'], type)
         try:
             db.collection('activity_logs').add({
                 'stock_item_id': stock_item_id, 'transaction_id': trans_id,
