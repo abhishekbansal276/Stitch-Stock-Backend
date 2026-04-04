@@ -20,7 +20,7 @@ class SheetsService:
         "Transporter Name", "Remarks"
     ]
     MOVEMENTS_SCHEMA = [
-        "Movement ID", "Barcode ID", "Transaction ID", "Type", "Quantity", "User", "Timestamp"
+        "Movement ID", "Barcode ID", "Transaction ID", "Type", "Quantity", "Location", "User", "Timestamp"
     ]
     SUMMARY_SCHEMA = [
         "Product Code", "Product Name", "Total Received", "Total Dispatched", "Current Balance", "Unit"
@@ -206,8 +206,15 @@ class SheetsService:
             raw_qty = item.get('Quantity Received', '0')
             numeric_qty = self._parse_numeric(raw_qty)
             
-            self.add_movement(item_id, f"{trans_id} (Batch: {batch})", 'IN', numeric_qty, user_email)
-            self._update_summary(p_code, item.get('Product Name', 'N/A'), numeric_qty, item.get('Unit', 'PCS'), 'IN')
+            # Distribution Logic (Default to 'Main Warehouse' if not provided)
+            # This will be used for both Sheets and Firestore
+            distributions = item.get('distributions', [{'location': 'Main Warehouse', 'qty': numeric_qty}])
+            
+            for dist in distributions:
+                loc_name = dist.get('location', 'Main Warehouse')
+                l_qty = dist.get('qty', 0)
+                self.add_movement(item_id, f"{trans_id} (Batch: {batch})", 'IN', l_qty, user_email, location=loc_name)
+                self._update_summary(p_code, item.get('Product Name', 'N/A'), l_qty, item.get('Unit', 'PCS'), 'IN')
             
             new_ids.append(item_id)
 
@@ -324,25 +331,21 @@ class SheetsService:
             ).execute()
         except: pass
 
-    def add_movement(self, stock_item_id: str, trans_id: str, type: str, qty: float, user_email: str):
+    def add_movement(self, stock_item_id: str, trans_id: str, type: str, qty: float, user_email: str, location: str = "Main Warehouse"):
         now_str = time.strftime('%Y-%m-%d %H:%M:%S')
         if self.service:
-            # Type is 'IN' (Positive) or 'OUT' (Negative)
-            # Ensure quantity is reported correctly for the summary
-            # But the 'Quantity' column in Movements can be positive for both if type is clear.
-            # Standard: Store as signed number.
-            row = [str(uuid.uuid4())[:8].upper(), stock_item_id, trans_id, type, qty, user_email, now_str]
+            # Row mapping for Location-Aware Movements
+            row = [str(uuid.uuid4())[:8].upper(), stock_item_id, trans_id, type, qty, location, user_email, now_str]
             self._append_row('Stock Movements', row)
             
             # Sync to Summary
-            # We need to find the product code for this barcode
             item = self.get_stock_item(stock_item_id)
             if item:
                 self._update_summary(item['product_code'], item['item_name'], abs(qty), item['unit'], type)
         try:
             db.collection('activity_logs').add({
                 'stock_item_id': stock_item_id, 'transaction_id': trans_id,
-                'movement_type': type, 'quantity_changed': qty,
+                'movement_type': type, 'quantity_changed': qty, 'location': location,
                 'actor_email': user_email, 'created_at': int(time.time()), 'item_name': 'Audit Move'
             })
         except: pass

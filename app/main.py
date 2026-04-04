@@ -7,6 +7,7 @@ from app.routers import users
 from app.services.firebase import initialize_firebase, db
 from app.services.ocr import ocr_service
 from app.services.sheets import sheets_service
+from app.services.inventory import inventory_service
 from app.dependencies.auth import get_current_user
 
 # Load environment variables for local development
@@ -57,15 +58,27 @@ async def create_stock(
 ):
     """
     Save reviewed stock data into the register.
-    If product_code exists, update/merge. Otherwise, create new row.
+    Supports Multi-Location Distributions.
     """
     try:
         header = payload.get('header', {})
         items = payload.get('items', [])
         
-        # Save to Google Sheets with Audit Info (Full Name or Email)
         user_display = user.get('full_name', user['email'])
         item_ids = sheets_service.save_stock(header, items, user_display)
+        
+        # 2. Persist Spatial Positions to Firestore
+        for i, item_id in enumerate(item_ids):
+            item_data = items[i]
+            distributions = item_data.get('distributions', [
+                {'location': 'Main Floor', 'qty': item_data.get('Quantity Received', 0)}
+            ])
+            inventory_service.save_position(
+                item_id, item_data.get('Product Name'), 
+                item_data.get('Product Code'), 
+                item_data.get('Unit', 'PCS'),
+                distributions
+            )
         
         return {"message": "Stock created successfully", "stock_item_ids": item_ids}
     except Exception as e:
@@ -77,11 +90,16 @@ async def get_stock_item(
     user: dict = Depends(get_current_user)
 ):
     """
-    Fetch details for a specific stock item (called after scanning QR).
+    Fetch details + Spatial Positions (from Firestore).
     """
     item = sheets_service.get_stock_item(stock_item_id)
     if not item:
         raise HTTPException(status_code=404, detail="Stock item not found")
+        
+    pos = inventory_service.get_position(stock_item_id)
+    if pos:
+        item['distributions'] = pos.get('distributions', [])
+        
     return item
 
 @app.post("/stock/{stock_item_id}/remove")
@@ -91,10 +109,11 @@ async def remove_stock(
     user: dict = Depends(get_current_user)
 ):
     """
-    Deduct quantity from a stock item and record the movement.
+    Deduct quantity from a stock item and record the spatial movement.
     """
     try:
         qty_to_remove = float(payload.get('quantity', 0))
+        location_name = payload.get('location', 'Main Floor')
         usage = payload.get('usage', 'General')
         remarks = payload.get('remarks', '')
         
@@ -102,23 +121,18 @@ async def remove_stock(
         if not item:
             raise HTTPException(status_code=404, detail="Stock item not found")
             
-        if qty_to_remove <= 0 or qty_to_remove > item['quantity_remaining']:
-            raise HTTPException(status_code=400, detail=f"Invalid quantity. Available: {item['quantity_remaining']}")
+        # 1. Atomic Firestore Deduction (Spatial Map)
+        inventory_service.remove_stock_spatial(stock_item_id, location_name, qty_to_remove)
         
-        # 1. Update In-Memory Remaining
+        # 2. Update Sheets Ledger
         new_remaining = item['quantity_remaining'] - qty_to_remove
-        
-        # 2. Persist to Google Sheets
         sheets_service.update_stock_quantity(stock_item_id, new_remaining)
             
-        # 3. Record Movement (OUT)
-        # We use a generated transaction ID for removals if one isn't provided
+        # 3. Record Movement (OUT) with Location Tag
         trans_id = payload.get('transaction_id', f"OUT-{int(time.time())}")
-        sheets_service.add_movement(stock_item_id, trans_id, 'OUT', -qty_to_remove, user['email'])
+        sheets_service.add_movement(stock_item_id, trans_id, 'OUT', -qty_to_remove, user['email'], location=location_name)
         
         return {"message": "Stock removed successfully", "remaining": new_remaining}
-    except HTTPException:
-        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Removal failed: {str(e)}")
 
