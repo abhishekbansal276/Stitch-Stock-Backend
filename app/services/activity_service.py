@@ -4,7 +4,7 @@ from app.services.firebase import db
 from app.services.fcm_service import fcm_service
 
 class ActivityService:
-    def log_and_notify(self, user: Dict[str, Any], action_type: str, item_name: str, product_code: str, qty_change: float, location: str):
+    def log_and_notify(self, user: Dict[str, Any], action_type: str, item_name: str, product_code: str, qty_change: float, location: str, description: str = ""):
         """Standardized Log & Alert Engine."""
         try:
             # 1. Create the Audit Log Entry
@@ -13,10 +13,11 @@ class ActivityService:
             
             log_entry = {
                 'item_name': item_name,
+                'description': description,
                 'product_code': product_code,
                 'movement_type': action_type, # IN, OUT, TRANSFER
                 'quantity_changed': qty_change,
-                'location': location,
+                'location': location or "General Stock",
                 'actor_name': user_name,
                 'actor_email': user['email'],
                 'actor_role': user_role,
@@ -28,12 +29,12 @@ class ActivityService:
             
             # 3. Trigger Notification (Only if 'stock person' performed the action)
             if user_role == 'stock person':
-                title = f"📦 Stock Update: {action_type}"
-                body = f"{user_name} moved {qty_change} of {product_code} in {location}."
+                title = f"📦 {action_type}: {item_name}"
+                body = f"{user_name} moved {qty_change} of {product_code} in {location or 'Warehouse'}."
                 if action_type == 'IN':
-                    body = f"{user_name} added {qty_change} of {product_code} to {location}."
+                    body = f"{user_name} added {qty_change} of {product_code} to {location or 'Warehouse'}."
                 elif action_type == 'OUT':
-                    body = f"{user_name} removed {qty_change} of {product_code} from {location}."
+                    body = f"{user_name} removed {qty_change} of {product_code} from {location or 'Warehouse'}."
                 
                 fcm_service.send_multicast_to_admins(
                     title=title,

@@ -101,13 +101,21 @@ async def create_stock(
         # 3. Log Activity & Notify Admins
         for i, item_id in enumerate(item_ids):
             item_data = items[i]
+            
+            raw_qty = item_data.get('Quantity Received', 0)
+            try:
+                qty_val = float(raw_qty)
+            except (ValueError, TypeError):
+                qty_val = 0.0
+                
             activity_service.log_and_notify(
                 user=user,
                 action_type="IN",
                 item_name=item_data.get('Product Name', 'New Stock'),
                 product_code=item_data.get('Product Code', 'N/A'),
-                qty_change=float(item_data.get('Quantity Received', 0)),
-                location="Main Floor" # Primary Entry
+                qty_change=qty_val,
+                location="Main Floor", # Primary Entry
+                description=item_data.get('Description', '')
             )
         
         return {"message": "Stock created successfully", "stock_item_ids": item_ids}
@@ -166,10 +174,11 @@ async def remove_stock(
         activity_service.log_and_notify(
             user=user,
             action_type="OUT",
-            item_name=item['item_name'],
-            product_code=item['product_code'],
+            item_name=item.get('item_name', 'Stock Item'),
+            product_code=item.get('product_code', stock_item_id),
             qty_change=-qty_to_remove,
-            location=location_name
+            location=location_name,
+            description=item.get('description', '')
         )
         
         return {"message": "Stock removed successfully", "remaining": new_remaining}
@@ -224,6 +233,12 @@ async def transfer_stock_position(req: StockTransferRequest, user: dict = Depend
     """Operation: Atomically moves stock between zones with audit trail."""
     try:
         user_email = user['email']
+        
+        # 0. Fetch Item details for rich logging
+        item = sheets_service.get_stock_item(req.barcode_id)
+        item_name = item.get('item_name', 'Transfer Item') if item else "Move Operation"
+        item_desc = item.get('description', '') if item else ""
+
         # 1. Update Firestore Atomic Map
         inventory_service.transfer_stock(
             req.barcode_id, req.from_location, req.to_location, req.quantity
@@ -245,10 +260,11 @@ async def transfer_stock_position(req: StockTransferRequest, user: dict = Depend
         activity_service.log_and_notify(
             user=user,
             action_type="TRANSFER",
-            item_name="Move Operation",
+            item_name=item_name,
             product_code=req.barcode_id,
             qty_change=req.quantity,
-            location=loc_audit
+            location=loc_audit,
+            description=item_desc
         )
         
         return {"status": "success", "message": f"Stock moved to {req.to_location} successfully."}
