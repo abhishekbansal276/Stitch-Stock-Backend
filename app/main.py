@@ -8,7 +8,9 @@ from app.services.firebase import initialize_firebase, db
 from app.services.ocr import ocr_service
 from app.services.sheets import sheets_service
 from app.services.inventory import inventory_service
+from app.services.activity_service import activity_service
 from app.dependencies.auth import get_current_user
+from app.models.stock import StockTransferRequest # New Professional Model
 
 # Load environment variables for local development
 load_dotenv()
@@ -31,6 +33,22 @@ def read_root():
 
 # Include routers - Users router handles user management and /me
 app.include_router(users.router)
+
+@app.post("/users/fcm-token")
+async def register_fcm_token(payload: dict, user: dict = Depends(get_current_user)):
+    """Registers a mobile device FCM token for push notifications."""
+    try:
+        token = payload.get('fcm_token')
+        if not token:
+            raise HTTPException(status_code=400, detail="Token required.")
+        
+        db.collection('users').document(user['email']).update({
+            'fcm_token': token,
+            'updated_at': int(time.time())
+        })
+        return {"status": "success"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/stock/extract")
 async def extract_stock(
@@ -78,6 +96,18 @@ async def create_stock(
                 item_data.get('Product Code'), 
                 item_data.get('Unit', 'PCS'),
                 distributions
+            )
+        
+        # 3. Log Activity & Notify Admins
+        for i, item_id in enumerate(item_ids):
+            item_data = items[i]
+            activity_service.log_and_notify(
+                user=user,
+                action_type="IN",
+                item_name=item_data.get('Product Name', 'New Stock'),
+                product_code=item_data.get('Product Code', 'N/A'),
+                qty_change=float(item_data.get('Quantity Received', 0)),
+                location="Main Floor" # Primary Entry
             )
         
         return {"message": "Stock created successfully", "stock_item_ids": item_ids}
@@ -132,6 +162,16 @@ async def remove_stock(
         trans_id = payload.get('transaction_id', f"OUT-{int(time.time())}")
         sheets_service.add_movement(stock_item_id, trans_id, 'OUT', -qty_to_remove, user['email'], location=location_name)
         
+        # 4. Log Activity & Notify Admins
+        activity_service.log_and_notify(
+            user=user,
+            action_type="OUT",
+            item_name=item['item_name'],
+            product_code=item['product_code'],
+            qty_change=-qty_to_remove,
+            location=location_name
+        )
+        
         return {"message": "Stock removed successfully", "remaining": new_remaining}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Removal failed: {str(e)}")
@@ -153,31 +193,67 @@ async def get_summary(user: dict = Depends(get_current_user)):
         }
 
 @app.get("/logs")
-async def get_logs(user: dict = Depends(get_current_user)):
-    """
-    Get audit logs from Firestore.
-    """
+async def get_logs(limit: int = 20, last_ts: int = None, search: str = None, user: dict = Depends(get_current_user)):
+    """Advanced Audit Timeline with Pagination and Multi-Field Search."""
     try:
-        # Fetching from Firestore collection
-        logs_ref = db.collection('activity_logs').order_by('created_at', direction='descending').limit(15)
-        logs = [doc.to_dict() for doc in logs_ref.stream()]
-        
-        # Fallback for empty collections
-        if not logs:
-            return [
-                {
-                    "item_name": "Welcome to Stitch!",
-                    "movement_type": "INFO",
-                    "quantity_changed": 0,
-                    "actor_email": "System",
-                    "created_at": int(time.time()),
-                    "stock_item_id": "STK-000"
-                }
-            ]
-        return logs
+        return activity_service.get_logs_paged(limit=limit, last_ts=last_ts, search=search)
     except Exception as e:
         print(f"Log fetch failed: {e}")
         return []
+
+# --- WAREHOUSE EXPLORER & SPATIAL TRANSFER ---
+
+@app.get("/warehouse/zones")
+async def get_zones(user: dict = Depends(get_current_user)):
+    """Discovery: Returns all physical locations and occupancy stats."""
+    try:
+        return inventory_service.get_all_zones()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/warehouse/items")
+async def get_items_by_zone(zone: str, user: dict = Depends(get_current_user)):
+    """Drill-down: Returns all products present in a specific zone."""
+    try:
+        return inventory_service.get_items_in_zone(zone)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/stock/transfer")
+async def transfer_stock_position(req: StockTransferRequest, user: dict = Depends(get_current_user)):
+    """Operation: Atomically moves stock between zones with audit trail."""
+    try:
+        user_email = user['email']
+        # 1. Update Firestore Atomic Map
+        inventory_service.transfer_stock(
+            req.barcode_id, req.from_location, req.to_location, req.quantity
+        )
+        
+        # 2. Log to Google Sheets Movements (Audit)
+        # Format: "Zone A -> Zone B" for spatial traceability
+        loc_audit = f"{req.from_location} ➔ {req.to_location}"
+        sheets_service.add_movement(
+            req.barcode_id, 
+            req.reason or "WMS-TRANSFER", 
+            "TRANSFER", 
+            req.quantity, 
+            user_email,
+            location=loc_audit
+        )
+        
+        # 3. Log Activity & Notify Admins
+        activity_service.log_and_notify(
+            user=user,
+            action_type="TRANSFER",
+            item_name="Move Operation",
+            product_code=req.barcode_id,
+            qty_change=req.quantity,
+            location=loc_audit
+        )
+        
+        return {"status": "success", "message": f"Stock moved to {req.to_location} successfully."}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 if __name__ == "__main__":
     import uvicorn
