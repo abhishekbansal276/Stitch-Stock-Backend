@@ -48,8 +48,8 @@ class OCRService:
            - 'Serial Number' or 'UPG...' -> 'Invoice Number'
            - 'Description' -> 'Product Name'
            - 'Price/UOM', 'Rate' -> 'Rate per Unit'
-           - 'Invoice Value', 'Grand Total', 'Total (Rounded)' -> 'Final Amount'
-        8. TAXES (EXHAUSTIVE): Search for ANY tax row (IGST, CGST, SGST, UTGST, Cess). Sum them into 'Taxes (IGST/CGST/SGST)'.
+           - 'Invoice Value', 'Grand Total', 'Total (Rounded)', 'Final Amount' -> 'Final Amount'
+        8. TAXES (EXHAUSTIVE): Search for ANY tax row (IGST, CGST, SGST, UTGST, Cess, GST). Sum them into 'Taxes (IGST/CGST/SGST)'.
         9. OUTPUT: Strictly valid JSON. Header for unique fields, Items for product list.
         
         JSON STRUCTURE:
@@ -135,23 +135,26 @@ class OCRService:
     def _mock_extract(self, filename: str):
         return {
             'header': {
-                'Supplier Name': 'GAIL MOCK', 
-                'Invoice Number': 'UPG3A...', 
+                'Supplier Name': 'GAIL (India) Limited Mock', 
+                'Invoice Number': 'UPG3A25212061228', 
                 'Supplier GST': '09AAACG1209J3ZS',
                 'Date': '2026-03-08', 
                 'Vehicle Number': 'GJ05CW8825',
-                'Transporter Name': 'RITCO LOGISTICS'
+                'Transporter Name': 'RITCO LOGISTICS',
+                'Transport / Freight': 23461.20
             },
             'items': [
                 {
-                    'Product Name': 'G-LEX HDPE-1', 
+                    'Product Name': 'G-LEX HDPE-1 (Consolidated)', 
                     'Product Code': 'B63A003A', 
                     'Batch Number': '26021097, 26031098',
                     'Quantity Received': '12.0 MT', 
                     'Number of Bags': '480',
-                    'Unit': 'MT', 
+                    'Unit': 'TO', 
                     'Rate per Unit': 125120.0, 
-                    'Total Amount': 1501440.0
+                    'Total Amount': 1501440.0,
+                    'Taxes (IGST/CGST/SGST)': '271242.22 (IGST)',
+                    'Final Amount': 1778144.0
                 }
             ]
         }
