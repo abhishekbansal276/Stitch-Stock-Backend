@@ -43,8 +43,14 @@ class OCRService:
         4. TABLE EXTRACTION: Trace every row in the product table. Do NOT skip any rows.
         5. BAGS: Find the 'NO. OF BAGS' column. Extract it into 'Number of Bags' for each item.
         6. QUANTITY: For 'Quantity Received', use the Metric Tons (TO/MT) value. 
-        7. SMART MAPPING: 'Serial Number' -> 'Invoice Number', 'Description' -> 'Product Name', 'Price/UOM' -> 'Rate per Unit'.
-        8. OUTPUT: Strictly valid JSON. Header for unique fields, Items for product list.
+        7. SMART MAPPING: 
+           - 'UOM' or 'UOM*' -> 'Unit'
+           - 'Serial Number' or 'UPG...' -> 'Invoice Number'
+           - 'Description' -> 'Product Name'
+           - 'Price/UOM', 'Rate' -> 'Rate per Unit'
+           - 'Invoice Value', 'Grand Total', 'Total (Rounded)' -> 'Final Amount'
+        8. TAXES (EXHAUSTIVE): Search for ANY tax row (IGST, CGST, SGST, UTGST, Cess). Sum them into 'Taxes (IGST/CGST/SGST)'.
+        9. OUTPUT: Strictly valid JSON. Header for unique fields, Items for product list.
         
         JSON STRUCTURE:
         {{
@@ -92,6 +98,12 @@ class OCRService:
                     base['Number of Bags'] = self._sum_strings(base.get('Number of Bags'), item.get('Number of Bags'))
                     base['Total Amount'] = self._safe_float(base.get('Total Amount')) + self._safe_float(item.get('Total Amount'))
                     base['Final Amount'] = self._safe_float(base.get('Final Amount')) + self._safe_float(item.get('Final Amount'))
+                    base['Taxes (IGST/CGST/SGST)'] = self._sum_strings(base.get('Taxes (IGST/CGST/SGST)'), item.get('Taxes (IGST/CGST/SGST)'))
+                    
+                    # Unit Persistence: Take the strongest non-empty unit
+                    if not base.get('Unit') or base.get('Unit') == 'PCS':
+                        base['Unit'] = item.get('Unit')
+                    
                     if item.get('Batch Number') and item.get('Batch Number') not in base['Batch Number']:
                         base['Batch Number'] = f"{base['Batch Number']}, {item.get('Batch Number')}"
                 else:
