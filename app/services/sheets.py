@@ -259,4 +259,8 @@ class SheetsService:
             return float(matches[0]) if matches else 0.0
         except: return 0.0
 
+    def get_current_headers(self) -> List[str]:
+        """Returns the base schema for AI audit context."""
+        return self.BASE_SCHEMA
+
 sheets_service = SheetsService()
