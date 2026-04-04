@@ -125,17 +125,18 @@ async def remove_stock(
 @app.get("/reports/summary")
 async def get_summary(user: dict = Depends(get_current_user)):
     """
-    Get summary data for the dashboard (Total In, Out, Balance).
-    In 'Real Integration', this fetches from the 'stock_summary' sheet.
+    Get live summary data from the 'Stock Summary' sheet.
     """
-    # MOCK: In production, query Google Sheets summary sheet or aggregate Firestore logs
-    # For now, keeping it simple as requested
-    return {
-        "total_in": 1250,
-        "total_out": 450,
-        "available_balance": 800,
-        "low_stock_count": 3
-    }
+    try:
+        return sheets_service.get_summary_stats()
+    except Exception as e:
+        print(f"Summary Fetch Error: {e}")
+        return {
+            "total_in": 0,
+            "total_out": 0,
+            "available_balance": 0,
+            "low_stock_count": 0
+        }
 
 @app.get("/logs")
 async def get_logs(user: dict = Depends(get_current_user)):
