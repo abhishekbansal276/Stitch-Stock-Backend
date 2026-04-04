@@ -3,6 +3,7 @@ import time
 import uuid
 import base64
 import json
+import re
 from typing import List, Dict
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
@@ -148,7 +149,9 @@ class SheetsService:
             # Record Movement (Include Batch Number for legacy traceability)
             batch = item.get('Batch Number', 'N/A')
             trans_id = header.get('Invoice Number', 'TRANS-NEW')
-            self.add_movement(item_id, f"{trans_id} (Batch: {batch})", 'IN', float(item.get('Quantity Received', 0)), user_email)
+            raw_qty = item.get('Quantity Received', '0')
+            numeric_qty = self._parse_numeric(raw_qty)
+            self.add_movement(item_id, f"{trans_id} (Batch: {batch})", 'IN', numeric_qty, user_email)
             new_ids.append(item_id)
 
         return new_ids
@@ -165,16 +168,23 @@ class SheetsService:
             result = self.service.spreadsheets().values().get(
                 spreadsheetId=self.spreadsheet_id, range=f'Stock Register!{col_letter}{row_idx}'
             ).execute()
-            old_qty = float(result.get('values', [[0]])[0][0])
+            old_qty_str = result.get('values', [[0]])[0][0]
+            old_qty = self._parse_numeric(old_qty_str)
             
-            new_qty = old_qty + float(new_item.get('Quantity Received', 0))
+            raw_new_qty = new_item.get('Quantity Received', '0')
+            new_qty_parsed = self._parse_numeric(raw_new_qty)
+            
+            # For the summary, we store the new calculated text if it was a hybrid, 
+            # but for simplicity we'll just sum the numeric parts for now 
+            # and append the new raw text for audit.
+            final_qty_val = old_qty + new_qty_parsed
             now = time.strftime('%Y-%m-%d %H:%M:%S')
 
             # 2. Update Quantity + Updated At + Updated By
             # Note: We use individual updates to be safer with column mapping
             self.service.spreadsheets().values().update(
                 spreadsheetId=self.spreadsheet_id, range=f'Stock Register!{chr(65+qty_idx)}{row_idx}',
-                valueInputOption='USER_ENTERED', body={'values': [[new_qty]]}
+                valueInputOption='USER_ENTERED', body={'values': [[final_qty_val]]}
             ).execute()
             
             self.service.spreadsheets().values().update(
@@ -241,7 +251,12 @@ class SheetsService:
         except: pass
         return {}
 
-    def get_current_headers(self) -> List[str]:
-        return self.BASE_SCHEMA
+    def _parse_numeric(self, val: any) -> float:
+        """Extracts the first floating point number from a string (e.g. '7.675 MT' -> 7.675)"""
+        if isinstance(val, (int, float)): return float(val)
+        try:
+            matches = re.findall(r"[-+]?\d*\.\d+|\d+", str(val))
+            return float(matches[0]) if matches else 0.0
+        except: return 0.0
 
 sheets_service = SheetsService()
