@@ -19,37 +19,30 @@ class OCRService:
         if not self.model:
             return self._mock_extract(filename)
 
-        # Create the multimodal prompt
+        # Create the multimodal prompt for Dynamic Extraction
         prompt = """
-        Analyze this invoice/bill image and extract the following fields into a PRECISE JSON format.
+        Act as an Elite Inventory Digitizer. Analyze this document (Invoice, Bill, or Gate Pass) 
+        and extract EVERY piece of information into a strictly valid JSON format.
         
+        RULES:
+        1. Use "Professional Title Case" for all keys (e.g., "Supplier Name", "Bill Number", "Date").
+        2. Divide the data into "header" (unique fields) and "items" (list of table rows).
+        3. Extract fields like: Supplier, Invoice No, Vehicle No, Date, Total Amount, etc.
+        4. For items, extract: Item Name, Product Code (SKU), Quantity, Unit, Rate, Amount.
+        5. If a field name is not standard, use the most professional equivalent.
+        6. Return ONLY the JSON object. No markdown, no preambles.
+        
+        JSON STRUCTURE:
         {
-          "header": {
-            "supplier_name": "String",
-            "document_no": "String",
-            "document_date": "String (YYYY-MM-DD)",
-            "vehicle_no": "String (if present, else empty)"
-          },
-          "items": [
-            {
-              "item_name": "String (Description)",
-              "product_code": "String (Extract Code/SKU if present, else create a short slug from name)",
-              "quantity_total": "Number",
-              "unit": "String (Kg/Meter/Pc)",
-              "rate": "Number",
-              "amount": "Number"
-            }
-          ]
+          "header": { "Key Name": "Value", ... },
+          "items": [ { "Item Name": "...", "Quantity": 0.0, ... }, ... ]
         }
         
-        Return ONLY the JSON object. No markdown, no triple backticks, no explanations.
-        Handle multiple items if present. If values are missing, use empty strings or 0.
-        CRITICAL: Search thoroughly for all line items in the invoice. If no items are found, MUST create one item with empty fields.
+        CRITICAL: Be thorough. Don't skip any fields visible on the page.
         """
 
         try:
             # Prepare image for Gemini
-            # Detecting mime type based on extension (simple check)
             ext = filename.split('.')[-1].lower()
             mime_type = "image/jpeg"
             if ext == 'png': mime_type = "image/png"
@@ -63,15 +56,14 @@ class OCRService:
                 }
             ])
             
-            # Clean response text
+            # Clean and sanitize response text
             text = response.text.strip()
-            # Remove markdown backticks if Gemini added them despite my prompt lol
-            if text.startswith("```json"):
-                text = text[7:-3]
-            elif text.startswith("```"):
-                text = text[3:-3]
             
-            # Find the first { and last } to be safe
+            # Remove potential markdown wraps
+            if text.startswith("```json"): text = text[7:-3]
+            elif text.startswith("```"): text = text[3:-3]
+            
+            # Find JSON bounds
             start = text.find('{')
             end = text.rfind('}')
             if start != -1 and end != -1:
@@ -81,25 +73,24 @@ class OCRService:
 
         except Exception as e:
             print(f"Gemini Extraction Error: {str(e)}")
-            # Fallback to mock if it fails during deployment testing
             return self._mock_extract(filename)
 
     def _mock_extract(self, filename: str):
         return {
             'header': {
-                'supplier_name': 'Sample Supplier Ltd', 
-                'document_no': 'INV-999', 
-                'document_date': '2024-04-04', 
-                'vehicle_no': 'N/A'
+                'Supplier Name': 'Mock Fabric Supplier', 
+                'Bill Number': 'MOCK-101', 
+                'Date': '2024-04-04', 
+                'Vehicle ID': 'N/A'
             },
             'items': [
                 {
-                    'item_name': 'Digitally Scanned Fabric', 
-                    'product_code': 'FAB-001', 
-                    'quantity_total': 100.0, 
-                    'unit': 'Meters', 
-                    'rate': 55.0, 
-                    'amount': 5500.0
+                    'Item Name': 'Elite Raw Fabric', 
+                    'Product Code': 'FAB-MOCK', 
+                    'Quantity': 150.0, 
+                    'Unit': 'Meters', 
+                    'Rate': 85.0, 
+                    'Amount': 12750.0
                 }
             ]
         }
