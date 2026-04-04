@@ -15,7 +15,7 @@ class SheetsService:
         "Barcode ID", "Created At", "Created By", "Updated At", "Updated By",
         "Date", "Invoice Number", "Supplier Name", "Supplier GST", 
         "Product Code", "Product Name", "Batch Number", "Quantity Received", 
-        "Unit", "Rate per Unit", "Total Amount", "Transport / Freight", 
+        "Unit", "Number of Bags", "Rate per Unit", "Total Amount", "Transport / Freight", 
         "Taxes (IGST/CGST/SGST)", "Final Amount", "Vehicle Number", 
         "Transporter Name", "Remarks"
     ]

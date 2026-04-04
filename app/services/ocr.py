@@ -19,11 +19,11 @@ class OCRService:
         if not self.model:
             return self._mock_extract(filename)
 
-        # ELITE SCHEMA: User's strictly requested 17 fields
+        # ELITE SCHEMA: User's strictly requested fields
         elite_fields = [
             "Date", "Invoice Number", "Supplier Name", "Supplier GST", 
             "Product Code", "Product Name", "Batch Number", "Quantity Received", 
-            "Unit", "Rate per Unit", "Total Amount", "Transport / Freight", 
+            "Unit", "Number of Bags", "Rate per Unit", "Total Amount", "Transport / Freight", 
             "Taxes (IGST/CGST/SGST)", "Final Amount", "Vehicle Number", 
             "Transporter Name", "Remarks"
         ]
@@ -31,33 +31,30 @@ class OCRService:
         # Build schema context
         schema_context = f"\nREQUIRED COLUMNS: {', '.join(elite_fields)}"
 
-        # MECHANICAL PRECISION PROMPT (V10)
+        # MECHANICAL PRECISION PROMPT (V11)
         prompt = f"""
         Act as a Professional Inventory Auditor. Analyze the provided image (Invoice/Bill) with 100% mechanical precision.
-        
         {schema_context}
         
         STRICT EXTRACTION RULES:
-        1. TABLE EXTRACTION: Trace every row in the product table. Do NOT skip any rows.
-        2. QUANTITY (TO, bags): This is critical. If 'Bags' and 'Metric Tons (MT/TO)' are both present, format 'Quantity Received' as: '[Tons Value] MT ([Bags Value] Bags)'.
-        3. BATCH NUMBER: Look specifically for the 'BATCH NO.' column in the product table. Capture it per row.
-        4. VEHICLE/TRANSPORTER: Look for 'Vehicle Regn. No.' and 'Transporter Name' in the transport/mode of transport section.
-        5. TAXES/FREIGHT: Look at the footer summary. Map 'FREIGHT' to 'Transport / Freight'. Map 'IGST/CGST/SGST' to 'Taxes (IGST/CGST/SGST)'.
-        6. SMART MAPPING: 
-           - 'Serial Number' or 'UPG...' -> 'Invoice Number'
-           - 'Description of Goods' -> 'Product Name'
-           - 'Price Rs./UOM' -> 'Rate per Unit'
-        7. OUTPUT: Strictly valid JSON. Header fields for unique data, Items list for product rows.
+        1. LANDMARK (SUPPLIER GST): Look for the 'SUPPLIER' box at the top. Inside that box, find the row labeled 'GST NO.' and extract that value as 'Supplier GST'.
+        2. LANDMARK (TRANSPORT): Look for the 'MODE OF TRANSPORT' section. Extract 'TRANSPORTER NAME' and 'VEHICLE REGN. NO.'.
+        3. LANDMARK (FREIGHT): Look at the table footer summary. Map the 'FREIGHT' amount to 'Transport / Freight'.
+        4. TABLE EXTRACTION: Trace every row in the product table. Do NOT skip any rows.
+        5. BAGS: Find the 'NO. OF BAGS' column. Extract it into 'Number of Bags' for each item.
+        6. QUANTITY: For 'Quantity Received', use the Metric Tons (TO/MT) value. 
+        7. SMART MAPPING: 'Serial Number' -> 'Invoice Number', 'Description' -> 'Product Name', 'Price/UOM' -> 'Rate per Unit'.
+        8. OUTPUT: Strictly valid JSON. Header for unique fields, Items for product list.
         
         JSON STRUCTURE:
         {{
-          "header": {{ "Date": "...", "Invoice Number": "...", "Supplier Name": "...", "Vehicle Number": "...", ... }},
+          "header": {{ "Date": "...", "Invoice Number": "...", "Supplier Name": "...", "Supplier GST": "...", "Vehicle Number": "...", "Transporter Name": "...", "Transport / Freight": 0.0 }},
           "items": [ 
             {{ 
               "Product Code": "...", "Product Name": "...", "Batch Number": "...", 
-              "Quantity Received": "...", "Unit": "MT", "Rate per Unit": 0.0, 
-              "Taxes (IGST/CGST/SGST)": "...", "Final Amount": 0.0 
-            }}, ... 
+              "Quantity Received": "...", "Unit": "MT", "Number of Bags": "...", "Rate per Unit": 0.0, 
+              "Total Amount": 0.0, "Taxes (IGST/CGST/SGST)": "...", "Final Amount": 0.0 
+            }} 
           ]
         }}
         """
@@ -82,29 +79,67 @@ class OCRService:
             if start != -1 and end != -1:
                 text = text[start:end+1]
 
-            return json.loads(text.strip())
+            data = json.loads(text.strip())
+            
+            # CONSOLIDATION (v11): Sum items with same Product Code
+            items = data.get('items', [])
+            consolidated = {}
+            for item in items:
+                p_code = str(item.get('Product Code', 'UNKNOWN')).strip()
+                if p_code in consolidated:
+                    base = consolidated[p_code]
+                    base['Quantity Received'] = self._sum_strings(base.get('Quantity Received'), item.get('Quantity Received'))
+                    base['Number of Bags'] = self._sum_strings(base.get('Number of Bags'), item.get('Number of Bags'))
+                    base['Total Amount'] = self._safe_float(base.get('Total Amount')) + self._safe_float(item.get('Total Amount'))
+                    base['Final Amount'] = self._safe_float(base.get('Final Amount')) + self._safe_float(item.get('Final Amount'))
+                    if item.get('Batch Number') and item.get('Batch Number') not in base['Batch Number']:
+                        base['Batch Number'] = f"{base['Batch Number']}, {item.get('Batch Number')}"
+                else:
+                    consolidated[p_code] = item
+            
+            data['items'] = list(consolidated.values())
+            return data
 
         except Exception as e:
             print(f"Extraction Error: {str(e)}")
             return self._mock_extract(filename)
 
+    def _safe_float(self, val) -> float:
+        if not val: return 0.0
+        try:
+            matches = re.findall(r"[-+]?\d*\.\d+|\d+", str(val))
+            return float(matches[0]) if matches else 0.0
+        except: return 0.0
+
+    def _sum_strings(self, val1, val2) -> str:
+        f1 = self._safe_float(val1)
+        f2 = self._safe_float(val2)
+        unit = ""
+        if isinstance(val1, str):
+            unit_match = re.search(r'[a-zA-Z]+', val1)
+            if unit_match: unit = f" {unit_match.group()}"
+        return f"{f1 + f2}{unit}".strip()
+
     def _mock_extract(self, filename: str):
         return {
             'header': {
-                'Supplier Name': 'GAIL (India) Limited Mock', 
-                'Invoice Number': 'UPG3A25212061228', 
+                'Supplier Name': 'GAIL MOCK', 
+                'Invoice Number': 'UPG3A...', 
+                'Supplier GST': '09AAACG1209J3ZS',
                 'Date': '2026-03-08', 
-                'Vehicle Number': 'GJ05CW8825'
+                'Vehicle Number': 'GJ05CW8825',
+                'Transporter Name': 'RITCO LOGISTICS'
             },
             'items': [
                 {
                     'Product Name': 'G-LEX HDPE-1', 
                     'Product Code': 'B63A003A', 
-                    'Batch Number': '26021097',
-                    'Quantity Received': '7.675 MT (307 Bags)', 
+                    'Batch Number': '26021097, 26031098',
+                    'Quantity Received': '12.0 MT', 
+                    'Number of Bags': '480',
                     'Unit': 'MT', 
                     'Rate per Unit': 125120.0, 
-                    'Total Amount': 960296.0
+                    'Total Amount': 1501440.0
                 }
             ]
         }
