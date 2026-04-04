@@ -9,11 +9,21 @@ from googleapiclient.discovery import build
 from app.services.firebase import db
 
 class SheetsService:
+    # ELITE SCHEMA DEFINITION (22 Columns)
+    BASE_SCHEMA = [
+        "Barcode ID", "Created At", "Created By", "Updated At", "Updated By",
+        "Date", "Invoice Number", "Supplier Name", "Supplier GST", 
+        "Product Code", "Product Name", "Batch Number", "Quantity Received", 
+        "Unit", "Rate per Unit", "Total Amount", "Transport / Freight", 
+        "Taxes (IGST/CGST/SGST)", "Final Amount", "Vehicle Number", 
+        "Transporter Name", "Remarks"
+    ]
+
     def __init__(self):
         self.spreadsheet_id = os.getenv("GOOGLE_SHEETS_ID")
         self.scopes = ['https://www.googleapis.com/auth/spreadsheets']
         self.service = self._initialize_service()
-        self.header_map = None # { "Header Name": ColumnIndex }
+        self.header_map = {name: i for i, name in enumerate(self.BASE_SCHEMA)}
 
     def _initialize_service(self):
         b64_key = os.getenv("FIREBASE_SERVICE_ACCOUNT_B64")
@@ -34,97 +44,54 @@ class SheetsService:
         print("WARNING: SheetsService running in MOCK mode.")
         return None
 
-    def _get_or_create_headers(self, sample_header: Dict, sample_items: List[Dict]) -> Dict:
-        """
-        Reads existing headers or creates them based on the first bill analysis.
-        Locks the schema once created.
-        """
+    def _get_or_create_headers(self) -> Dict:
+        """Initializes the Sheet with the Elite Professional Schema (22 Columns)."""
         if not self.service: return {}
-        
         try:
-            # 1. Fetch Row 1
             result = self.service.spreadsheets().values().get(
                 spreadsheetId=self.spreadsheet_id, range='Stock Register!1:1'
             ).execute()
             values = result.get('values', [])
             
-            if values and len(values[0]) > 0:
-                # Headers exist, build map
-                return {name: i for i, name in enumerate(values[0])}
+            if not values or len(values[0]) == 0:
+                # Write the 22 Elite Headers
+                self.service.spreadsheets().values().update(
+                    spreadsheetId=self.spreadsheet_id, range='Stock Register!1:1',
+                    valueInputOption='RAW', body={'values': [self.BASE_SCHEMA]}
+                ).execute()
+                self._apply_professional_styles(len(self.BASE_SCHEMA))
             
-            # 2. If Row 1 is empty, define new Professional Headers
-            # We start with fixed anchor columns A-C
-            new_headers = ["Barcode ID", "Entry Timestamp", "Actor Email"]
-            
-            # Add dynamic header fields from AI
-            for key in sample_header.keys():
-                if key not in new_headers:
-                    new_headers.append(key)
-            
-            # Add dynamic item fields (collapsed into the same row for 1:N items mapping)
-            # Standard item keys to ensure we can scan them
-            standard_item_keys = ["Product Code", "Item Name", "Quantity Total", "Quantity Remaining", "Unit", "Rate", "Amount"]
-            for key in standard_item_keys:
-                if key not in new_headers:
-                    new_headers.append(key)
-            
-            # Add any other fields discovered in the first item
-            if sample_items:
-                for key in sample_items[0].keys():
-                    if key not in new_headers:
-                        new_headers.append(key)
-
-            # 3. Write Headers to Sheet
-            self.service.spreadsheets().values().update(
-                spreadsheetId=self.spreadsheet_id,
-                range='Stock Register!1:1',
-                valueInputOption='RAW',
-                body={'values': [new_headers]}
-            ).execute()
-            
-            # 4. Apply Elite Styling
-            self._apply_professional_styles(len(new_headers))
-            
-            return {name: i for i, name in enumerate(new_headers)}
-
+            return {name: i for i, name in enumerate(self.BASE_SCHEMA)}
         except Exception as e:
-            print(f"Schema Initialization Error: {e}")
-            return {}
+            print(f"Header Init Error: {e}")
+            return self.header_map
 
     def _apply_professional_styles(self, column_count: int):
-        """Applies Indigo Headers and Zebra Striping to the Sheet."""
         try:
-            # Get sheet ID
             sheet_metadata = self.service.spreadsheets().get(spreadsheetId=self.spreadsheet_id).execute()
-            sheet_id = 0 # Assuming 'Stock Register' is the first sheet
+            sheet_id = 0
             for s in sheet_metadata.get('sheets', []):
                 if s['properties']['title'] == 'Stock Register':
                     sheet_id = s['properties']['sheetId']
                     break
 
             requests = [
-                # 1. Format Header (Row 1)
+                # 1. Indigo Header
                 {
                     "repeatCell": {
                         "range": {"sheetId": sheet_id, "startRowIndex": 0, "endRowIndex": 1},
                         "cell": {
                             "userEnteredFormat": {
-                                "backgroundColor": {"red": 129/255, "green": 140/255, "blue": 248/255}, # Neon Indigo #818CF8
-                                "textFormat": {"foregroundColor": {"red": 1.0, "green": 1.0, "blue": 1.0}, "bold": True, "fontSize": 10},
+                                "backgroundColor": {"red": 129/255, "green": 140/255, "blue": 248/255},
+                                "textFormat": {"foregroundColor": {"red": 1.0, "green": 1.0, "blue": 1.0}, "bold": True},
                                 "horizontalAlignment": "CENTER"
                             }
                         },
                         "fields": "userEnteredFormat(backgroundColor,textFormat,horizontalAlignment)"
                     }
                 },
-                # 2. Freeze Row 1
-                {
-                    "updateSheetProperties": {
-                        "properties": {"sheetId": sheet_id, "gridProperties": {"frozenRowCount": 1}},
-                        "fields": "gridProperties.frozenRowCount"
-                    }
-                },
-                # 3. Zebra Striping (Alternating colors)
+                {"updateSheetProperties": {"properties": {"sheetId": sheet_id, "gridProperties": {"frozenRowCount": 1}}, "fields": "gridProperties.frozenRowCount"}},
+                # 2. Zebra Striping
                 {
                     "addConditionalFormatRule": {
                       "rule": {
@@ -139,74 +106,93 @@ class SheetsService:
                 }
             ]
             self.service.spreadsheets().batchUpdate(spreadsheetId=self.spreadsheet_id, body={'requests': requests}).execute()
-        except Exception as e:
-            print(f"Styling Error: {e}")
+        except: pass
 
     def save_stock(self, header: Dict, items: List[Dict], user_email: str) -> List[str]:
         if not self.service:
             return [f"MOCK-{uuid.uuid4().hex[:6]}" for _ in items]
 
-        # Sync schema and get mapping
-        self.header_map = self._get_or_create_headers(header, items)
-        if not self.header_map:
-            raise Exception("Failed to initialize Sheet Schema.")
-
+        self.header_map = self._get_or_create_headers()
         new_ids = []
         now = time.strftime('%Y-%m-%d %H:%M:%S')
 
         for item in items:
-            # Anchor field for barcode / ID
             item_id = f"STK-{int(time.time())}-{uuid.uuid4().hex[:4].upper()}"
+            row_data = [""] * len(self.BASE_SCHEMA)
             
-            # Map data to dynamic columns
-            row_data = [""] * (max(self.header_map.values()) + 1)
+            # Fill Fixed / Audit Columns
+            row_data[self.header_map["Barcode ID"]] = item_id
+            row_data[self.header_map["Created At"]] = now
+            row_data[self.header_map["Created By"]] = user_email
             
-            # Fill Fixed Pillars
-            row_data[self.header_map.get("Barcode ID", 0)] = item_id
-            row_data[self.header_map.get("Entry Timestamp", 1)] = now
-            row_data[self.header_map.get("Actor Email", 2)] = user_email
-            
-            # Fill Dynamic Header Fields
-            for k, v in header.items():
-                if k in self.header_map:
-                    row_data[self.header_map[k]] = v
-            
-            # Fill Item Fields
-            for k, v in item.items():
-                # Remap common keys to professional names if needed
-                prof_key = k
-                if k == 'quantity_remaining': prof_key = 'Quantity Remaining'
-                if k == 'quantity_total': prof_key = 'Quantity Total'
-                
-                if prof_key in self.header_map:
-                    row_data[self.header_map[prof_key]] = v
-                elif k in self.header_map:
-                    row_data[self.header_map[k]] = v
+            # Fill Elite 17 Columns
+            # We check both the 'header' data and the 'item' data for these fields
+            # Since some like 'Batch Number' are item-level, others like 'Supplier' are header-level.
+            for key in self.BASE_SCHEMA[5:]: # Skip audit columns
+                val = header.get(key) or item.get(key)
+                if val:
+                    idx = self.header_map[key]
+                    row_data[idx] = val
 
-            # Check for existing product (Simple check on 'Product Code' column if it exists)
-            p_code_idx = self.header_map.get("Product Code", -1)
-            p_code = item.get("Product Code", item.get("product_code", "N/A"))
+            # MERGE LOGIC (Anchor: Product Code)
+            p_code_idx = self.header_map["Product Code"]
+            p_code = item.get("Product Code", "N/A")
             
-            existing_row_idx = -1
-            if p_code_idx != -1:
-                existing_row_idx = self._find_row_by_col(p_code_idx, p_code)
+            existing_row_idx = self._find_row_by_col(p_code_idx, p_code)
 
             if existing_row_idx != -1:
-                # Merge logic
-                item_id = self._merge_into_row_dynamic(existing_row_idx, item, user_email)
+                item_id = self._merge_into_row_elite(existing_row_idx, item, user_email)
             else:
-                # Append new row
                 self._append_row('Stock Register', row_data)
             
-            # Record Movement
-            trans_id = header.get('Bill Number', header.get('document_no', 'TRANS-NEW'))
-            self.add_movement(item_id, trans_id, 'IN', float(item.get('Quantity Total', item.get('quantity_total', 0))), user_email)
+            # Record Movement (Include Batch Number for legacy traceability)
+            batch = item.get('Batch Number', 'N/A')
+            trans_id = header.get('Invoice Number', 'TRANS-NEW')
+            self.add_movement(item_id, f"{trans_id} (Batch: {batch})", 'IN', float(item.get('Quantity Received', 0)), user_email)
             new_ids.append(item_id)
 
         return new_ids
 
+    def _merge_into_row_elite(self, row_idx: int, new_item: Dict, user_email: str) -> str:
+        """Standardized Elite Merge: Sum Quantity + Update Audit Fields"""
+        try:
+            qty_idx = self.header_map["Quantity Received"]
+            upd_at_idx = self.header_map["Updated At"]
+            upd_by_idx = self.header_map["Updated By"]
+            
+            # 1. Fetch current quantity
+            col_letter = chr(65 + qty_idx)
+            result = self.service.spreadsheets().values().get(
+                spreadsheetId=self.spreadsheet_id, range=f'Stock Register!{col_letter}{row_idx}'
+            ).execute()
+            old_qty = float(result.get('values', [[0]])[0][0])
+            
+            new_qty = old_qty + float(new_item.get('Quantity Received', 0))
+            now = time.strftime('%Y-%m-%d %H:%M:%S')
+
+            # 2. Update Quantity + Updated At + Updated By
+            # Note: We use individual updates to be safer with column mapping
+            self.service.spreadsheets().values().update(
+                spreadsheetId=self.spreadsheet_id, range=f'Stock Register!{chr(65+qty_idx)}{row_idx}',
+                valueInputOption='USER_ENTERED', body={'values': [[new_qty]]}
+            ).execute()
+            
+            self.service.spreadsheets().values().update(
+                spreadsheetId=self.spreadsheet_id, range=f'Stock Register!{chr(65+upd_at_idx)}{row_idx}:{chr(65+upd_by_idx)}{row_idx}',
+                valueInputOption='USER_ENTERED', body={'values': [[now, user_email]]}
+            ).execute()
+            
+            # 3. Get item_id from the first column
+            res_id = self.service.spreadsheets().values().get(
+                spreadsheetId=self.spreadsheet_id, range=f'Stock Register!A{row_idx}'
+            ).execute().get('values', [['UNKNOWN']])[0][0]
+            
+            return res_id
+        except: return "ERROR-MERGE"
+
     def _find_row_by_col(self, col_idx: int, value: str) -> int:
-        col_letter = chr(65 + col_idx) if col_idx < 26 else "A" # Simplified for MVP
+        if not self.service: return -1
+        col_letter = chr(65 + col_idx) if col_idx < 26 else "Z"
         try:
             result = self.service.spreadsheets().values().get(
                 spreadsheetId=self.spreadsheet_id, range=f'Stock Register!{col_letter}:{col_letter}'
@@ -218,48 +204,15 @@ class SheetsService:
             return -1
         except: return -1
 
-    def _merge_into_row_dynamic(self, row_idx: int, new_item: Dict, user_email: str) -> str:
-        """Dynamically merges quantities in an existing row."""
-        try:
-            # Need indices for Quantity Total (H->8) and Remaining (I->9)
-            # In dynamic schema these might move, but for standard we stick to names
-            tot_idx = self.header_map.get("Quantity Total", 7)
-            rem_idx = self.header_map.get("Quantity Remaining", 8)
-            
-            # Get current values
-            curr_vals = self.service.spreadsheets().values().get(
-                spreadsheetId=self.spreadsheet_id, range=f'Stock Register!A{row_idx}:Z{row_idx}'
-            ).execute().get('values', [[]])[0]
-            
-            item_id = curr_vals[self.header_map["Barcode ID"]]
-            new_total = float(curr_vals[tot_idx]) + float(new_item.get('Quantity Total', 0))
-            new_rem = float(curr_vals[rem_idx]) + float(new_item.get('Quantity Total', 0))
-            
-            # Update
-            ranges = [
-                f'Stock Register!{chr(65+tot_idx)}{row_idx}',
-                f'Stock Register!{chr(65+rem_idx)}{row_idx}'
-            ]
-            for i, r in enumerate(ranges):
-                val = new_total if i == 0 else new_rem
-                self.service.spreadsheets().values().update(
-                    spreadsheetId=self.spreadsheet_id, range=r,
-                    valueInputOption='USER_ENTERED', body={'values': [[val]]}
-                ).execute()
-            return item_id
-        except: return "ERROR"
-
     def _append_row(self, sheet_name: str, row_data: List):
         try:
             self.service.spreadsheets().values().append(
                 spreadsheetId=self.spreadsheet_id, range=f'{sheet_name}!A:A',
                 valueInputOption='USER_ENTERED', body={'values': [row_data]}
             ).execute()
-        except Exception as e:
-            print(f"Sheets Append Error: {e}")
+        except: pass
 
     def add_movement(self, stock_item_id: str, trans_id: str, type: str, qty: float, user_email: str):
-        now_ts = int(time.time())
         now_str = time.strftime('%Y-%m-%d %H:%M:%S')
         if self.service:
             row = [str(uuid.uuid4())[:8].upper(), stock_item_id, trans_id, type, qty, user_email, now_str]
@@ -268,51 +221,27 @@ class SheetsService:
             db.collection('activity_logs').add({
                 'stock_item_id': stock_item_id, 'transaction_id': trans_id,
                 'movement_type': type, 'quantity_changed': qty,
-                'actor_email': user_email, 'created_at': now_ts, 'item_name': 'Stock Update'
+                'actor_email': user_email, 'created_at': int(time.time()), 'item_name': 'Audit Move'
             })
         except: pass
 
     def get_stock_item(self, item_id: str) -> Dict:
-        """Fetch stock item from the dynamically mapped register (Anchor Barcode ID in Col A)."""
         if not self.service: return {}
         try:
-            # 1. Fetch entire row
             result = self.service.spreadsheets().values().get(
-                spreadsheetId=self.spreadsheet_id, range='Stock Register!A:Z'
+                spreadsheetId=self.spreadsheet_id, range='Stock Register!A:V'
             ).execute().get('values', [])
-            
-            if not result: return {}
-            
-            # 2. Setup mapping if not cached
-            if not self.header_map:
-                self.header_map = {name: i for i, name in enumerate(result[0])}
-            
-            # 3. Search for item_id in Barcode ID column
-            barcode_idx = self.header_map.get("Barcode ID", 0)
             for row in result:
-                if row and row[barcode_idx] == item_id:
+                if row and row[0] == item_id:
                     return {
-                        "stock_item_id": row[self.header_map.get("Barcode ID", 0)],
-                        "item_name": row[self.header_map.get("Item Name", 6)],
-                        "quantity_remaining": float(row[self.header_map.get("Quantity Remaining", 8)]),
-                        "unit": row[self.header_map.get("Unit", 9)],
-                        "supplier_name": row[self.header_map.get("Supplier Name", 2)],
-                        "product_code": row[self.header_map.get("Product Code", 5)],
-                        "transaction_id": row[self.header_map.get("Bill Number", 3)]
+                        "stock_item_id": row[0], "item_name": row[10], # Product Name
+                        "quantity_remaining": float(row[12]), # Quantity Received
+                        "unit": row[13], "supplier_name": row[7], "product_code": row[9]
                     }
-        except Exception as e:
-            print(f"Fetch Error: {e}")
+        except: pass
         return {}
 
     def get_current_headers(self) -> List[str]:
-        """Fetches the first row of 'Stock Register' to get existing column names."""
-        if not self.service: return []
-        try:
-            result = self.service.spreadsheets().values().get(
-                spreadsheetId=self.spreadsheet_id, range='Stock Register!1:1'
-            ).execute()
-            values = result.get('values', [])
-            return values[0] if values else []
-        except: return []
+        return self.BASE_SCHEMA
 
 sheets_service = SheetsService()

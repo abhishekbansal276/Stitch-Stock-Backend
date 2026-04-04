@@ -58,8 +58,9 @@ async def create_stock(
         header = payload.get('header', {})
         items = payload.get('items', [])
         
-        # Save to Google Sheets
-        item_ids = sheets_service.save_stock(header, items, user['email'])
+        # Save to Google Sheets with Audit Info (Full Name or Email)
+        user_display = user.get('full_name', user['email'])
+        item_ids = sheets_service.save_stock(header, items, user_display)
         
         return {"message": "Stock created successfully", "stock_item_ids": item_ids}
     except Exception as e:

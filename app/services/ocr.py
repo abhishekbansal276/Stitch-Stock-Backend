@@ -19,36 +19,42 @@ class OCRService:
         if not self.model:
             return self._mock_extract(filename)
 
-        # Build schema context for the prompt
-        schema_context = ""
-        if existing_headers:
-            schema_context = f"\nEXISTING DATABASE COLUMNS: {', '.join(existing_headers)}\nPLEASE MAP YOUR FINDINGS TO THESE EXACT COLUMN NAMES IF THEY MATCH."
+        # ELITE SCHEMA: User's strictly requested 17 fields
+        elite_fields = [
+            "Date", "Invoice Number", "Supplier Name", "Supplier GST", 
+            "Product Code", "Product Name", "Batch Number", "Quantity Received", 
+            "Unit", "Rate per Unit", "Total Amount", "Transport / Freight", 
+            "Taxes (IGST/CGST/SGST)", "Final Amount", "Vehicle Number", 
+            "Transporter Name", "Remarks"
+        ]
 
-        # Create the multimodal prompt for Dynamic Extraction
+        # Build schema context
+        schema_context = f"\nPREFERRED DATABASE COLUMNS: {', '.join(elite_fields)}"
+        if existing_headers:
+            schema_context += f"\nEXISTING SHEET COLUMNS: {', '.join(existing_headers)}\nPLEASE MAP YOUR FINDINGS TO THESE EXACT NAMES."
+
+        # Create the multimodal prompt for Elite Standardized Extraction
         prompt = f"""
         Act as an Elite Inventory Digitizer. Analyze this document (Invoice, Bill, or Gate Pass) 
         and extract EVERY piece of information into a strictly valid JSON format.
         {schema_context}
         
         RULES:
-        1. Use "Professional Title Case" for all keys (e.g., "Supplier Name", "Bill Number", "Date").
-        2. Divide the data into "header" (unique fields) and "items" (list of table rows).
-        3. Extract fields like: Supplier, Invoice No, Vehicle No, Date, Total Amount, etc.
-        4. For items, extract: Item Name, Product Code (SKU), Quantity, Unit, Rate, Amount.
-        5. If a field name is not standard, use the most professional equivalent.
-        6. Return ONLY the JSON object. No markdown, no preambles.
+        1. Prioritize these keys: {', '.join(elite_fields)}.
+        2. SMART MAPPING: If a bill says "Freight" or "Extra Charges", map it to "Transport / Freight". 
+        3. SMART MAPPING: If a bill says "GST Amount", map it to "Taxes (IGST/CGST/SGST)".
+        4. "Batch Number" is critical. Look for Lot No, Batch, or Date-based codes.
+        5. Divide the data into "header" (unique fields like Supplier, Invoice, Vehicle) and "items" (list of products).
+        6. Return ONLY the JSON object. No markdown.
         
         JSON STRUCTURE:
-        {
-          "header": { "Key Name": "Value", ... },
-          "items": [ { "Item Name": "...", "Quantity": 0.0, ... }, ... ]
-        }
-        
-        CRITICAL: Be thorough. Don't skip any fields visible on the page.
+        {{
+          "header": {{ "Key Name": "Value", ... }},
+          "items": [ {{ "Product Name": "...", "Quantity Received": 0.0, "Batch Number": "...", ... }}, ... ]
+        }}
         """
 
         try:
-            # Prepare image for Gemini
             ext = filename.split('.')[-1].lower()
             mime_type = "image/jpeg"
             if ext == 'png': mime_type = "image/png"
@@ -56,20 +62,13 @@ class OCRService:
 
             response = self.model.generate_content([
                 prompt,
-                {
-                    "mime_type": mime_type,
-                    "data": content
-                }
+                {"mime_type": mime_type, "data": content}
             ])
             
-            # Clean and sanitize response text
             text = response.text.strip()
-            
-            # Remove potential markdown wraps
             if text.startswith("```json"): text = text[7:-3]
             elif text.startswith("```"): text = text[3:-3]
             
-            # Find JSON bounds
             start = text.find('{')
             end = text.rfind('}')
             if start != -1 and end != -1:
@@ -84,19 +83,20 @@ class OCRService:
     def _mock_extract(self, filename: str):
         return {
             'header': {
-                'Supplier Name': 'Mock Fabric Supplier', 
-                'Bill Number': 'MOCK-101', 
+                'Supplier Name': 'Standard Mock Corp', 
+                'Invoice Number': 'INV-MOCK-99', 
                 'Date': '2024-04-04', 
-                'Vehicle ID': 'N/A'
+                'Vehicle Number': 'MH-01-AB-1234'
             },
             'items': [
                 {
-                    'Item Name': 'Elite Raw Fabric', 
-                    'Product Code': 'FAB-MOCK', 
-                    'Quantity': 150.0, 
-                    'Unit': 'Meters', 
-                    'Rate': 85.0, 
-                    'Amount': 12750.0
+                    'Product Name': 'Premium Thread Spool', 
+                    'Product Code': 'TH-BLUE-01', 
+                    'Batch Number': 'BATCH-2024-A',
+                    'Quantity Received': 500.0, 
+                    'Unit': 'Spools', 
+                    'Rate per Unit': 12.0, 
+                    'Total Amount': 6000.0
                 }
             ]
         }
