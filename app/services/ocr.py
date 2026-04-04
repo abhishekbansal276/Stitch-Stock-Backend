@@ -10,7 +10,24 @@ class OCRService:
         self.api_key = os.getenv("GEMINI_API_KEY")
         if self.api_key:
             genai.configure(api_key=self.api_key)
-            self.model = genai.GenerativeModel('gemini-1.5-flash')
+            # Find a valid model dynamically
+            available_flash = 'gemini-1.5-flash'
+            try:
+                models = [m.name for m in genai.list_models()]
+                if 'models/gemini-1.5-flash-latest' in models:
+                    available_flash = 'gemini-1.5-flash-latest'
+                elif 'models/gemini-1.5-flash' in models:
+                    available_flash = 'gemini-1.5-flash'
+                elif 'models/gemini-1.0-pro' in models:
+                    available_flash = 'gemini-1.0-pro'
+                elif 'models/gemini-pro' in models:
+                    available_flash = 'gemini-pro'
+            except Exception as e:
+                print(f"WARNING: Could not list models: {e}. Defaulting to gemini-1.5-flash-latest")
+                available_flash = 'gemini-1.5-flash-latest'
+            
+            self.model = genai.GenerativeModel(available_flash)
+            print(f"OCRService initialized with model: {available_flash}")
         else:
             print("WARNING: GEMINI_API_KEY not found. OCRService running in MOCK mode.")
             self.model = None
