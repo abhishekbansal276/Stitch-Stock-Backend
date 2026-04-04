@@ -29,28 +29,36 @@ class OCRService:
         ]
 
         # Build schema context
-        schema_context = f"\nPREFERRED DATABASE COLUMNS: {', '.join(elite_fields)}"
-        if existing_headers:
-            schema_context += f"\nEXISTING SHEET COLUMNS: {', '.join(existing_headers)}\nPLEASE MAP YOUR FINDINGS TO THESE EXACT NAMES."
+        schema_context = f"\nREQUIRED COLUMNS: {', '.join(elite_fields)}"
 
-        # Create the multimodal prompt for Elite Standardized Extraction
+        # MECHANICAL PRECISION PROMPT (V10)
         prompt = f"""
-        Act as an Elite Inventory Digitizer. Analyze this document (Invoice, Bill, or Gate Pass) 
-        and extract EVERY piece of information into a strictly valid JSON format.
+        Act as a Professional Inventory Auditor. Analyze the provided image (Invoice/Bill) with 100% mechanical precision.
+        
         {schema_context}
         
-        RULES:
-        1. Prioritize these keys: {', '.join(elite_fields)}.
-        2. SMART MAPPING: If a bill says "Freight" or "Extra Charges", map it to "Transport / Freight". 
-        3. SMART MAPPING: If a bill says "GST Amount", map it to "Taxes (IGST/CGST/SGST)".
-        4. "Batch Number" is critical. Look for Lot No, Batch, or Date-based codes.
-        5. Divide the data into "header" (unique fields like Supplier, Invoice, Vehicle) and "items" (list of products).
-        6. Return ONLY the JSON object. No markdown.
+        STRICT EXTRACTION RULES:
+        1. TABLE EXTRACTION: Trace every row in the product table. Do NOT skip any rows.
+        2. QUANTITY (TO, bags): This is critical. If 'Bags' and 'Metric Tons (MT/TO)' are both present, format 'Quantity Received' as: '[Tons Value] MT ([Bags Value] Bags)'.
+        3. BATCH NUMBER: Look specifically for the 'BATCH NO.' column in the product table. Capture it per row.
+        4. VEHICLE/TRANSPORTER: Look for 'Vehicle Regn. No.' and 'Transporter Name' in the transport/mode of transport section.
+        5. TAXES/FREIGHT: Look at the footer summary. Map 'FREIGHT' to 'Transport / Freight'. Map 'IGST/CGST/SGST' to 'Taxes (IGST/CGST/SGST)'.
+        6. SMART MAPPING: 
+           - 'Serial Number' or 'UPG...' -> 'Invoice Number'
+           - 'Description of Goods' -> 'Product Name'
+           - 'Price Rs./UOM' -> 'Rate per Unit'
+        7. OUTPUT: Strictly valid JSON. Header fields for unique data, Items list for product rows.
         
         JSON STRUCTURE:
         {{
-          "header": {{ "Key Name": "Value", ... }},
-          "items": [ {{ "Product Name": "...", "Quantity Received": 0.0, "Batch Number": "...", ... }}, ... ]
+          "header": {{ "Date": "...", "Invoice Number": "...", "Supplier Name": "...", "Vehicle Number": "...", ... }},
+          "items": [ 
+            {{ 
+              "Product Code": "...", "Product Name": "...", "Batch Number": "...", 
+              "Quantity Received": "...", "Unit": "MT", "Rate per Unit": 0.0, 
+              "Taxes (IGST/CGST/SGST)": "...", "Final Amount": 0.0 
+            }}, ... 
+          ]
         }}
         """
 
@@ -77,26 +85,26 @@ class OCRService:
             return json.loads(text.strip())
 
         except Exception as e:
-            print(f"Gemini Extraction Error: {str(e)}")
+            print(f"Extraction Error: {str(e)}")
             return self._mock_extract(filename)
 
     def _mock_extract(self, filename: str):
         return {
             'header': {
-                'Supplier Name': 'Standard Mock Corp', 
-                'Invoice Number': 'INV-MOCK-99', 
-                'Date': '2024-04-04', 
-                'Vehicle Number': 'MH-01-AB-1234'
+                'Supplier Name': 'GAIL (India) Limited Mock', 
+                'Invoice Number': 'UPG3A25212061228', 
+                'Date': '2026-03-08', 
+                'Vehicle Number': 'GJ05CW8825'
             },
             'items': [
                 {
-                    'Product Name': 'Premium Thread Spool', 
-                    'Product Code': 'TH-BLUE-01', 
-                    'Batch Number': 'BATCH-2024-A',
-                    'Quantity Received': 500.0, 
-                    'Unit': 'Spools', 
-                    'Rate per Unit': 12.0, 
-                    'Total Amount': 6000.0
+                    'Product Name': 'G-LEX HDPE-1', 
+                    'Product Code': 'B63A003A', 
+                    'Batch Number': '26021097',
+                    'Quantity Received': '7.675 MT (307 Bags)', 
+                    'Unit': 'MT', 
+                    'Rate per Unit': 125120.0, 
+                    'Total Amount': 960296.0
                 }
             ]
         }
