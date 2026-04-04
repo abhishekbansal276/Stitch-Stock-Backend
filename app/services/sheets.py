@@ -304,4 +304,15 @@ class SheetsService:
             print(f"Fetch Error: {e}")
         return {}
 
+    def get_current_headers(self) -> List[str]:
+        """Fetches the first row of 'Stock Register' to get existing column names."""
+        if not self.service: return []
+        try:
+            result = self.service.spreadsheets().values().get(
+                spreadsheetId=self.spreadsheet_id, range='Stock Register!1:1'
+            ).execute()
+            values = result.get('values', [])
+            return values[0] if values else []
+        except: return []
+
 sheets_service = SheetsService()

@@ -36,7 +36,11 @@ async def extract_stock(
     """
     try:
         content = await file.read()
-        extracted_data = ocr_service.extract_from_file(content, file.filename)
+        
+        # ELITE SYNC: Get existing headers to help Gemini map them correctly
+        existing_headers = sheets_service.get_current_headers()
+        
+        extracted_data = ocr_service.extract_from_file(content, file.filename, existing_headers)
         return extracted_data
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Extraction failed: {str(e)}")

@@ -15,14 +15,20 @@ class OCRService:
             print("WARNING: GEMINI_API_KEY not found. OCRService running in MOCK mode.")
             self.model = None
 
-    def extract_from_file(self, content: bytes, filename: str) -> Dict:
+    def extract_from_file(self, content: bytes, filename: str, existing_headers: List[str] = None) -> Dict:
         if not self.model:
             return self._mock_extract(filename)
 
+        # Build schema context for the prompt
+        schema_context = ""
+        if existing_headers:
+            schema_context = f"\nEXISTING DATABASE COLUMNS: {', '.join(existing_headers)}\nPLEASE MAP YOUR FINDINGS TO THESE EXACT COLUMN NAMES IF THEY MATCH."
+
         # Create the multimodal prompt for Dynamic Extraction
-        prompt = """
+        prompt = f"""
         Act as an Elite Inventory Digitizer. Analyze this document (Invoice, Bill, or Gate Pass) 
         and extract EVERY piece of information into a strictly valid JSON format.
+        {schema_context}
         
         RULES:
         1. Use "Professional Title Case" for all keys (e.g., "Supplier Name", "Bill Number", "Date").
