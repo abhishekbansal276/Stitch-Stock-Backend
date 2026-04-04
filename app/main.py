@@ -1,7 +1,8 @@
+import time
 from fastapi import FastAPI, UploadFile, File, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from app.routers import users
-from app.services.firebase import initialize_firebase
+from app.services.firebase import initialize_firebase, db
 from app.services.ocr import ocr_service
 from app.services.sheets import sheets_service
 from app.dependencies.auth import get_current_user
@@ -22,7 +23,7 @@ app.add_middleware(
 def read_root():
     return {"message": "Stitch Stock Management System API is live"}
 
-# Include routers
+# Include routers - Users router handles user management and /me
 app.include_router(users.router)
 
 @app.post("/stock/extract")
@@ -53,7 +54,7 @@ async def create_stock(
         header = payload.get('header', {})
         items = payload.get('items', [])
         
-        # Save to (Mock) Google Sheets
+        # Save to Google Sheets
         item_ids = sheets_service.save_stock(header, items, user['email'])
         
         return {"message": "Stock created successfully", "stock_item_ids": item_ids}
@@ -92,19 +93,22 @@ async def remove_stock(
             raise HTTPException(status_code=404, detail="Stock item not found")
             
         if qty_to_remove <= 0 or qty_to_remove > item['quantity_remaining']:
-            raise HTTPException(status_code=400, detail="Invalid quantity")
+            raise HTTPException(status_code=400, detail=f"Invalid quantity. Available: {item['quantity_remaining']}")
         
-        # Update (Mock) Sheets
-        item['quantity_remaining'] -= qty_to_remove
-        if item['quantity_remaining'] == 0:
-            item['status'] = 'CONSUMED'
-        elif item['quantity_remaining'] < item['quantity_total']:
-            item['status'] = 'PARTIAL'
+        # 1. Update In-Memory Remaining
+        new_remaining = item['quantity_remaining'] - qty_to_remove
+        
+        # 2. Persist to Google Sheets
+        sheets_service.update_stock_quantity(stock_item_id, new_remaining)
             
-        # Record Movement
-        sheets_service.add_movement(stock_item_id, item['transaction_id'], 'OUT', -qty_to_remove, user['email'])
+        # 3. Record Movement (OUT)
+        # We use a generated transaction ID for removals if one isn't provided
+        trans_id = payload.get('transaction_id', f"OUT-{int(time.time())}")
+        sheets_service.add_movement(stock_item_id, trans_id, 'OUT', -qty_to_remove, user['email'])
         
-        return {"message": "Stock removed successfully", "remaining": item['quantity_remaining']}
+        return {"message": "Stock removed successfully", "remaining": new_remaining}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Removal failed: {str(e)}")
 
@@ -114,7 +118,8 @@ async def get_summary(user: dict = Depends(get_current_user)):
     Get summary data for the dashboard (Total In, Out, Balance).
     In 'Real Integration', this fetches from the 'stock_summary' sheet.
     """
-    # MOCK: In production, query Google Sheets summary sheet
+    # MOCK: In production, query Google Sheets summary sheet or aggregate Firestore logs
+    # For now, keeping it simple as requested
     return {
         "total_in": 1250,
         "total_out": 450,
@@ -129,7 +134,7 @@ async def get_logs(user: dict = Depends(get_current_user)):
     """
     try:
         # Fetching from Firestore collection
-        logs_ref = db.collection('activity_logs').order_by('created_at', direction='descending').limit(10)
+        logs_ref = db.collection('activity_logs').order_by('created_at', direction='descending').limit(15)
         logs = [doc.to_dict() for doc in logs_ref.stream()]
         
         # Fallback for empty collections

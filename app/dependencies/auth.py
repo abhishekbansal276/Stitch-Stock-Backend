@@ -2,36 +2,50 @@ from fastapi import Header, HTTPException, Depends
 from firebase_admin import auth
 from app.services.firebase import db
 
-# Role lookup from Firestore
+
 def get_current_user(authorization: str = Header(...)):
+    """
+    Verify the Firebase ID token from the Authorization header
+    and fetch the user's role/profile from Firestore.
+    """
     if not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Invalid authorization header")
-    
-    token = authorization.split("Bearer ")[1]
-    
+        raise HTTPException(status_code=401, detail="Invalid authorization header format")
+
+    token = authorization.split("Bearer ", 1)[1]
+
     try:
-        # Verify the ID token from Flutter
         decoded_token = auth.verify_id_token(token)
-        uid = decoded_token['uid']
-        email = decoded_token['email']
-        
-        # Get user details from Firestore
-        user_doc = db.collection('users').document(email).get()
+        uid = decoded_token.get("uid")
+        email = decoded_token.get("email")
+
+        if not email:
+            raise HTTPException(status_code=401, detail="Token missing email claim")
+
+        # Fetch user profile from Firestore
+        user_doc = db.collection("users").document(email).get()
         if not user_doc.exists:
-            # Maybe the user was just created in auth but not in Firestore yet
-            # Or the user was deleted from Firestore but not Auth
-            raise HTTPException(status_code=403, detail="User details not found in Firestore")
-        
+            raise HTTPException(
+                status_code=403,
+                detail="User profile not found in Firestore. Contact admin.",
+            )
+
         user_data = user_doc.to_dict()
-        user_data['uid'] = uid
+        user_data["uid"] = uid
+        user_data["email"] = email  # Ensure email is always present
         return user_data
-        
-    except ValueError:
-        raise HTTPException(status_code=401, detail="Invalid Firebase ID Token")
+
+    except HTTPException:
+        raise
+    except auth.InvalidIdTokenError:
+        raise HTTPException(status_code=401, detail="Invalid or expired Firebase ID token")
+    except auth.ExpiredIdTokenError:
+        raise HTTPException(status_code=401, detail="Firebase ID token has expired")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Authentication error: {str(e)}")
 
+
 def require_admin(user: dict = Depends(get_current_user)):
+    """Dependency that ensures the authenticated user has admin role."""
     if user.get("role") != "admin":
         raise HTTPException(status_code=403, detail="Admin role required")
     return user

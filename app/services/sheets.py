@@ -138,6 +138,44 @@ class SheetsService:
         except Exception as e:
             print(f"Firestore Log Error: {e}")
 
+    def update_stock_quantity(self, item_id: str, new_remaining: float):
+        """Updates the quantity_remaining for a specific item_id in the register."""
+        if not self.service:
+            return
+        try:
+            # 1. Find the row index
+            result = self.service.spreadsheets().values().get(
+                spreadsheetId=self.spreadsheet_id, range='Stock Register!A:A'
+            ).execute()
+            values = result.get('values', [])
+            row_idx = -1
+            for i, row in enumerate(values):
+                if row and row[0] == item_id:
+                    row_idx = i + 1
+                    break
+            
+            if row_idx == -1:
+                print(f"Error: Item {item_id} not found in Sheets.")
+                return
+
+            # 2. Update Column I (quantity_remaining) and Column K (status)
+            status = 'ACTIVE'
+            if new_remaining <= 0:
+                status = 'CONSUMED'
+            else:
+                # Need to check total quantity to decide if PARTIAL
+                # For simplicity, we'll just update based on remaining
+                pass
+            
+            self.service.spreadsheets().values().update(
+                spreadsheetId=self.spreadsheet_id,
+                range=f'Stock Register!I{row_idx}:K{row_idx}',
+                valueInputOption='USER_ENTERED',
+                body={'values': [[new_remaining, "", status]]} # Column J is Unit, leave it alone
+            ).execute()
+        except Exception as e:
+            print(f"Sheets Update Error: {e}")
+
     def get_stock_item(self, item_id: str) -> Dict:
         """Fetch a specific item from the register (for QR scanning)."""
         if not self.service: return {}

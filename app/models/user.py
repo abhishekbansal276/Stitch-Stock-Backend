@@ -1,15 +1,17 @@
 from pydantic import BaseModel, EmailStr
 from typing import Optional
 
+
 class UserCreate(BaseModel):
     email: EmailStr
     password: str
     full_name: str
-    role: str = "operator" # Default role
+    role: str = "operator"
     is_active: bool = True
 
+
 class UserResponse(BaseModel):
-    email: EmailStr
+    email: str
     full_name: str
     role: str
     is_active: bool
