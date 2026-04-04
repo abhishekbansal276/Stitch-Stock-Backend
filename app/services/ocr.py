@@ -44,6 +44,7 @@ class OCRService:
         
         Return ONLY the JSON object. No markdown, no triple backticks, no explanations.
         Handle multiple items if present. If values are missing, use empty strings or 0.
+        CRITICAL: Search thoroughly for all line items in the invoice. If no items are found, MUST create one item with empty fields.
         """
 
         try:
