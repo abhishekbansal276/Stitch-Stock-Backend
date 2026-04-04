@@ -126,11 +126,7 @@ class OCRService:
     def _sum_strings(self, val1, val2) -> str:
         f1 = self._safe_float(val1)
         f2 = self._safe_float(val2)
-        unit = ""
-        if isinstance(val1, str):
-            unit_match = re.search(r'[a-zA-Z]+', val1)
-            if unit_match: unit = f" {unit_match.group()}"
-        return f"{f1 + f2}{unit}".strip()
+        return str(f1 + f2)
 
     def _mock_extract(self, filename: str):
         return {
@@ -148,7 +144,7 @@ class OCRService:
                     'Product Name': 'G-LEX HDPE-1 (Consolidated)', 
                     'Product Code': 'B63A003A', 
                     'Batch Number': '26021097, 26031098',
-                    'Quantity Received': '12.0 MT', 
+                    'Quantity Received': '12.0', 
                     'Number of Bags': '480',
                     'Unit': 'TO', 
                     'Rate per Unit': 125120.0, 
