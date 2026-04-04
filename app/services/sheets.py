@@ -6,6 +6,7 @@ import json
 from typing import List, Dict
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
+from app.services.firebase import db
 
 class SheetsService:
     def __init__(self):
@@ -115,10 +116,27 @@ class SheetsService:
             print(f"Sheets Append Error: {e}")
 
     def add_movement(self, stock_item_id: str, trans_id: str, type: str, qty: float, user_email: str):
-        if not self.service: return
-        now = time.strftime('%Y-%m-%d %H:%M:%S')
-        row = [str(uuid.uuid4())[:8].upper(), stock_item_id, trans_id, type, qty, user_email, now]
-        self._append_row('Stock Movements', row)
+        now_ts = int(time.time())
+        now_str = time.strftime('%Y-%m-%d %H:%M:%S')
+        
+        # 1. Save to Google Sheets
+        if self.service:
+            row = [str(uuid.uuid4())[:8].upper(), stock_item_id, trans_id, type, qty, user_email, now_str]
+            self._append_row('Stock Movements', row)
+            
+        # 2. Save to Firestore (Used by Dashboard)
+        try:
+            db.collection('activity_logs').add({
+                'stock_item_id': stock_item_id,
+                'transaction_id': trans_id,
+                'movement_type': type,
+                'quantity_changed': qty,
+                'actor_email': user_email,
+                'created_at': now_ts,
+                'item_name': 'Stock Update' # Simplified
+            })
+        except Exception as e:
+            print(f"Firestore Log Error: {e}")
 
     def get_stock_item(self, item_id: str) -> Dict:
         """Fetch a specific item from the register (for QR scanning)."""
