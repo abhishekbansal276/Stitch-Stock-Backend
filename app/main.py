@@ -1,4 +1,6 @@
 import time
+import os
+from dotenv import load_dotenv
 from fastapi import FastAPI, UploadFile, File, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from app.routers import users
@@ -6,6 +8,9 @@ from app.services.firebase import initialize_firebase, db
 from app.services.ocr import ocr_service
 from app.services.sheets import sheets_service
 from app.dependencies.auth import get_current_user
+
+# Load environment variables for local development
+load_dotenv()
 
 app = FastAPI(title="Stitch Stock Management System")
 
