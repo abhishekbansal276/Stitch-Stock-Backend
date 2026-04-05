@@ -11,30 +11,28 @@ load_dotenv()
 def initialize_firebase():
     """Initialize Firebase Admin SDK and return Firestore client."""
     if not firebase_admin._apps:
-        # 1. Try Base64 string from environment (for Render/Cloud)
-        b64_key = os.getenv("FIREBASE_SERVICE_ACCOUNT_B64")
-        if b64_key:
+        # File-based initialization (source of truth for this deployment)
+        service_account_path = os.getenv("SERVICE_ACCOUNT_KEY", "serviceAccountKey.json")
+        
+        # In Docker/Railway, the file is usually in /app/serviceAccountKey.json
+        # If running from app/, check one level up
+        if not os.path.exists(service_account_path) and os.path.exists("../" + service_account_path):
+            service_account_path = "../" + service_account_path
+
+        if os.path.exists(service_account_path):
             try:
-                decoded_key = base64.b64decode(b64_key).decode("utf-8")
-                cred_dict = json.loads(decoded_key)
-                cred = credentials.Certificate(cred_dict)
+                cred = credentials.Certificate(service_account_path)
                 firebase_admin.initialize_app(cred)
-                print("Firebase initialized from Base64 env var.")
+                print(f"Firebase initialized successfully from file: {service_account_path}")
                 return firestore.client()
             except Exception as e:
-                print(f"Error loading Base64 Firebase key: {e}")
-
-        # 2. Try physical file (for Local Development)
-        service_account_path = os.getenv("SERVICE_ACCOUNT_KEY", "serviceAccountKey.json")
-        if os.path.exists(service_account_path):
-            cred = credentials.Certificate(service_account_path)
-            firebase_admin.initialize_app(cred)
-            print(f"Firebase initialized from file: {service_account_path}")
-        # 3. No credentials found
+                print(f"Error initializing Firebase from file: {e}")
+                raise e
+        
+        # Fallback error if file is missing
         error_msg = (
-            "FIREBASE AUTH FAILED: No credentials found! "
-            "Please set 'FIREBASE_SERVICE_ACCOUNT_B64' in your cloud environment variables "
-            "or ensure 'serviceAccountKey.json' exists locally."
+            f"FIREBASE AUTH FAILED: '{service_account_path}' not found! "
+            "Please ensure the file is committed to GitHub and present in the app root."
         )
         print(f"FATAL ERROR: {error_msg}")
         raise ValueError(error_msg)

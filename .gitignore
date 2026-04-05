@@ -153,7 +153,7 @@ cython_debug/
 .vscode/
 
 # Project Specific
-serviceAccountKey.json
+# serviceAccountKey.json
 *.pdf
 *.txt
 prd_extracted.txt
