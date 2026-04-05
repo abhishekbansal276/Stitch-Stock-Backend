@@ -30,23 +30,37 @@ def get_current_user(
             print("Auth Error: Token missing email claim.")
             raise HTTPException(status_code=401, detail="Token missing email claim")
 
-        # CLIENT-SIDE ROLE TRUST (Performance Opt)
-        if not x_user_role:
-            print(f"Auth Error: Missing X-User-Role header for {email}.")
-            raise HTTPException(
-                status_code=401,
-                detail="Authentication Error: Missing user role. Please relogin."
-            )
-
-        # Simplified user data without Firestore fetch
+        # ── FETCH PROFILE FROM FIRESTORE ──────────────────────────────────────
+        # This matches the logic seen in production logs (line 39).
+        # We wrap it in a try-block to ensure auth doesn't break if Firestore times out.
         user_data = {
             "uid": uid,
             "email": email,
-            "role": x_user_role,
+            "role": x_user_role or "user",
             "is_active": True,
-            "full_name": email.split('@')[0].capitalize() # Fallback name
+            "full_name": email.split('@')[0].capitalize()
         }
-        
+
+        try:
+            print(f"Auth: Fetching profile for {email} from Firestore...")
+            user_doc = db.collection("users").document(email).get()
+            if user_doc.exists:
+                db_data = user_doc.to_dict()
+                user_data.update({
+                    "role": db_data.get("role", user_data["role"]),
+                    "full_name": db_data.get("full_name", user_data["full_name"]),
+                    "is_active": db_data.get("is_active", True),
+                })
+        except Exception as e:
+            print(f"Auth Warning: Could not fetch profile from Firestore: {e}")
+            # If we have x_user_role, we can still proceed
+            if not x_user_role:
+                print("Auth Error: Missing X-User-Role and Firestore fetch failed.")
+                raise HTTPException(
+                    status_code=401,
+                    detail="Authentication Error: Database unreachable and no role provided."
+                )
+
         return user_data
 
     except HTTPException:

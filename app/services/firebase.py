@@ -22,6 +22,10 @@ def initialize_firebase():
         if sa_json:
             try:
                 cred_dict = json.loads(sa_json)
+                # ELITE FIX: Handle literal \n in private_key if passed from env var
+                if "private_key" in cred_dict:
+                    cred_dict["private_key"] = cred_dict["private_key"].replace("\\n", "\n")
+                
                 cred = credentials.Certificate(cred_dict)
                 firebase_admin.initialize_app(cred)
                 print("Firebase: Initialized from FIREBASE_SERVICE_ACCOUNT_JSON")

@@ -53,6 +53,10 @@ class SheetsService:
         if sa_json:
             try:
                 cred_dict = json.loads(sa_json)
+                # ELITE FIX: Handle literal \n in private_key if passed from env var
+                if "private_key" in cred_dict:
+                    cred_dict["private_key"] = cred_dict["private_key"].replace("\\n", "\n")
+                
                 creds = service_account.Credentials.from_service_account_info(
                     cred_dict, scopes=self.SCOPES)
                 print("SheetsService: credentials loaded from FIREBASE_SERVICE_ACCOUNT_JSON")
