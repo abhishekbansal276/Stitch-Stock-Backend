@@ -11,20 +11,20 @@ from googleapiclient.discovery import build
 from app.services.firebase import db
 
 class SheetsService:
-    # ELITE SCHEMA DEFINITION (22 Columns)
+    # ELITE SCHEMA DEFINITION (Product Info FIRST)
     BASE_SCHEMA = [
-        "Barcode ID", "Created At", "Created By", "Updated At", "Updated By",
-        "Date", "Invoice Number", "Supplier Name", "Supplier GST", 
-        "Product Code", "Product Name", "Batch Number", "Quantity Received", 
-        "Unit", "Number of Bags", "Rate per Unit", "Total Amount", "Transport / Freight", 
-        "Taxes (IGST/CGST/SGST)", "Final Amount", "Vehicle Number", 
-        "Transporter Name", "Remarks", "Barcode Link"
+        "Product Name", "Product Code", "Quantity Received", "Unit", "Barcode Link",
+        "Supplier Name", "Date", "Invoice Number", "Supplier GST", "Batch Number",
+        "Number of Bags", "Rate per Unit", "Total Amount", "Transport / Freight",
+        "Taxes (IGST/CGST/SGST)", "Final Amount", "Vehicle Number", "Transporter Name",
+        "Remarks", "Barcode ID", "Created At", "Created By", "Updated At", "Updated By"
     ]
     MOVEMENTS_SCHEMA = [
-        "Movement ID", "Barcode ID", "Transaction ID", "Type", "Quantity", "Warehouse", "Location", "User", "Timestamp", "Position ID", "Warehouse ID"
+        "Timestamp", "Product Name", "Type", "Quantity", "Warehouse", "Location", "User",
+        "Movement ID", "Barcode ID", "Transaction ID", "Position ID", "Warehouse ID"
     ]
     SUMMARY_SCHEMA = [
-        "Product Code", "Product Name", "Total Received", "Total Dispatched", "Current Balance", "Unit"
+        "Product Name", "Product Code", "Current Balance", "Unit", "Total Received", "Total Dispatched", "Last Updated"
     ]
 
     def __init__(self):
@@ -59,33 +59,26 @@ class SheetsService:
         """Initializes all sheets for the Elite Stock Infrastructure with $O(1)$ result caching."""
         if not self.service: return {}
         
-        # O(1) Cache Lookup (5-minute TTL)
         if self._cached_header_map and time.time() < self._cache_expiry:
             return self._cached_header_map
 
         try:
-            # 1. Main Stock Register
             self._ensure_sheet('Stock Register', self.BASE_SCHEMA)
-            # 2. Stock Movements
             self._ensure_sheet('Stock Movements', self.MOVEMENTS_SCHEMA)
-            # 3. Stock Summary
             self._ensure_sheet('Stock Summary', self.SUMMARY_SCHEMA)
 
             self._cached_header_map = {name: i for i, name in enumerate(self.BASE_SCHEMA)}
-            self._cache_expiry = time.time() + 300 # 5 min cache
+            self._cache_expiry = time.time() + 300 
             return self._cached_header_map
         except Exception as e:
             print(f"Header Init Error: {e}")
             return self.header_map
 
     def get_current_headers(self) -> List[str]:
-        """Public method to fetch available headers (used by OCR for mapping)."""
         return self.BASE_SCHEMA
 
     def _ensure_sheet(self, title: str, schema: List[str]):
-        """Detects if a sheet exists, if not creates it with standard styling."""
         try:
-            # Check if sheet exists
             metadata = self.service.spreadsheets().get(spreadsheetId=self.spreadsheet_id).execute()
             sheets = {s['properties']['title']: s['properties']['sheetId'] for s in metadata.get('sheets', [])}
             
@@ -93,150 +86,179 @@ class SheetsService:
                 body = {'requests': [{'addSheet': {'properties': {'title': title}}}]}
                 res = self.service.spreadsheets().batchUpdate(spreadsheetId=self.spreadsheet_id, body=body).execute()
                 sheet_id = res['replies'][0]['addSheet']['properties']['sheetId']
-                
-                # Write Headers
-                self.service.spreadsheets().values().update(
-                    spreadsheetId=self.spreadsheet_id, range=f'{title}!1:1',
-                    valueInputOption='RAW', body={'values': [schema]}
-                ).execute()
-                
+                self._write_headers(title, schema)
                 self._apply_elite_styles(sheet_id, len(schema), title)
+                if title == 'Stock Summary':
+                    self._add_dashboard_charts(sheet_id)
             else:
-                # Check for headers
                 result = self.service.spreadsheets().values().get(
                     spreadsheetId=self.spreadsheet_id, range=f'{title}!1:1'
                 ).execute()
                 if not result.get('values'):
-                    self.service.spreadsheets().values().update(
-                        spreadsheetId=self.spreadsheet_id, range=f'{title}!1:1',
-                        valueInputOption='RAW', body={'values': [schema]}
-                    ).execute()
+                    self._write_headers(title, schema)
+                    self._apply_elite_styles(sheets[title], len(schema), title)
         except Exception as e:
             print(f"Error ensuring sheet {title}: {e}")
 
+    def _write_headers(self, title: str, schema: List[str]):
+        self.service.spreadsheets().values().update(
+            spreadsheetId=self.spreadsheet_id, range=f'{title}!1:1',
+            valueInputOption='RAW', body={'values': [schema]}
+        ).execute()
+
     def _apply_elite_styles(self, sheet_id: int, column_count: int, title: str):
-        """Applies Indigo Header Styling and Zebra Striping."""
         try:
             requests = [
+                # 1. Header Styling
                 {
                     "repeatCell": {
                         "range": {"sheetId": sheet_id, "startRowIndex": 0, "endRowIndex": 1},
                         "cell": {
                             "userEnteredFormat": {
-                                "backgroundColor": {"red": 129/255, "green": 140/255, "blue": 248/255},
-                                "textFormat": {"foregroundColor": {"red": 1.0, "green": 1.0, "blue": 1.0}, "bold": True},
-                                "horizontalAlignment": "CENTER"
+                                "backgroundColor": {"red": 63/255, "green": 81/255, "blue": 181/255}, # Deep indigo
+                                "textFormat": {"foregroundColor": {"red": 1.0, "green": 1.0, "blue": 1.0}, "bold": True, "fontSize": 11},
+                                "horizontalAlignment": "CENTER",
+                                "verticalAlignment": "MIDDLE"
                             }
                         },
-                        "fields": "userEnteredFormat(backgroundColor,textFormat,horizontalAlignment)"
+                        "fields": "userEnteredFormat(backgroundColor,textFormat,horizontalAlignment,verticalAlignment)"
                     }
                 },
-                {"updateSheetProperties": {"properties": {"sheetId": sheet_id, "gridProperties": {"frozenRowCount": 1}}, "fields": "gridProperties.frozenRowCount"}},
+                # 2. Frozen Rows & Columns
+                {"updateSheetProperties": {"properties": {"sheetId": sheet_id, "gridProperties": {"frozenRowCount": 1, "frozenColumnCount": 2 if title != 'Stock Movements' else 1}}, "fields": "gridProperties.frozenRowCount,gridProperties.frozenColumnCount"}},
+                # 3. Zebra Striping (Conditional Formatting)
+                {
+                    "addConditionalFormatRule": {
+                        "rule": {
+                            "ranges": [{"sheetId": sheet_id, "startRowIndex": 1}],
+                            "booleanRule": {
+                                "condition": {"type": "CUSTOM_FORMULA", "values": [{"userEnteredValue": "=ISEVEN(ROW())"}]},
+                                "format": {"backgroundColor": {"red": 0.96, "green": 0.97, "blue": 1.0}}
+                            }
+                        },
+                        "index": 0
+                    }
+                }
             ]
+            
+            # Low Stock Alert for Summary Sheet
+            if title == 'Stock Summary':
+                requests.append({
+                    "addConditionalFormatRule": {
+                        "rule": {
+                            "ranges": [{"sheetId": sheet_id, "startRowIndex": 1, "startColumnIndex": 2, "endColumnIndex": 3}],
+                            "booleanRule": {
+                                "condition": {"type": "NUMBER_LESS", "values": [{"userEnteredValue": "10"}]},
+                                "format": {"backgroundColor": {"red": 1.0, "green": 0.9, "blue": 0.9}, "textFormat": {"foregroundColor": {"red": 0.8, "green": 0.0, "blue": 0.0}, "bold": True}}
+                            }
+                        },
+                        "index": 0
+                    }
+                })
+
             self.service.spreadsheets().batchUpdate(spreadsheetId=self.spreadsheet_id, body={'requests': requests}).execute()
         except: pass
 
-    def _apply_professional_styles(self, column_count: int):
+    def _add_dashboard_charts(self, sheet_id: int):
+        """Injects Bar and Pie charts into the Stock Summary sheet for visual analytics."""
         try:
-            sheet_metadata = self.service.spreadsheets().get(spreadsheetId=self.spreadsheet_id).execute()
-            sheet_id = 0
-            for s in sheet_metadata.get('sheets', []):
-                if s['properties']['title'] == 'Stock Register':
-                    sheet_id = s['properties']['sheetId']
-                    break
-
             requests = [
-                # 1. Indigo Header
                 {
-                    "repeatCell": {
-                        "range": {"sheetId": sheet_id, "startRowIndex": 0, "endRowIndex": 1},
-                        "cell": {
-                            "userEnteredFormat": {
-                                "backgroundColor": {"red": 129/255, "green": 140/255, "blue": 248/255},
-                                "textFormat": {"foregroundColor": {"red": 1.0, "green": 1.0, "blue": 1.0}, "bold": True},
-                                "horizontalAlignment": "CENTER"
-                            }
-                        },
-                        "fields": "userEnteredFormat(backgroundColor,textFormat,horizontalAlignment)"
-                    }
-                },
-                {"updateSheetProperties": {"properties": {"sheetId": sheet_id, "gridProperties": {"frozenRowCount": 1}}, "fields": "gridProperties.frozenRowCount"}},
-                # 2. Zebra Striping
-                {
-                    "addConditionalFormatRule": {
-                      "rule": {
-                        "ranges": [{"sheetId": sheet_id, "startRowIndex": 1}],
-                        "booleanRule": {
-                          "condition": {"type": "CUSTOM_FORMULA", "values": [{"userEnteredValue": "=ISEVEN(ROW())"}]},
-                          "format": {"backgroundColor": {"red": 0.95, "green": 0.96, "blue": 1.0}}
+                    "addChart": {
+                        "chart": {
+                            "spec": {
+                                "title": "Current Inventory Levels",
+                                "basicChart": {
+                                    "chartType": "BAR",
+                                    "legendPosition": "BOTTOM_LEGEND",
+                                    "axis": [{"position": "BOTTOM_AXIS", "title": "Quantity"}, {"position": "LEFT_AXIS", "title": "Products"}],
+                                    "domains": [{"domain": {"sourceRange": {"sources": [{"sheetId": sheet_id, "startRowIndex": 0, "startColumnIndex": 0, "endColumnIndex": 1}]}}}],
+                                    "series": [{"series": {"sourceRange": {"sources": [{"sheetId": sheet_id, "startRowIndex": 0, "startColumnIndex": 2, "endColumnIndex": 3}]}}, "targetAxis": "BOTTOM_AXIS"}]
+                                }
+                            },
+                            "position": {"newSheet": False, "overlayPosition": {"anchorCell": {"sheetId": sheet_id, "rowIndex": 2, "columnIndex": 8}, "offsetXPixels": 0, "offsetYPixels": 0}}
                         }
-                      },
-                      "index": 0
                     }
                 }
             ]
             self.service.spreadsheets().batchUpdate(spreadsheetId=self.spreadsheet_id, body={'requests': requests}).execute()
-        except: pass
+        except Exception as e:
+            print(f"Chart Creation Error: {e}")
 
     def save_stock_batch(self, header: Dict, items: List[Dict], item_ids: List[str], user_email: str):
-        """Async-compatible batch save using pre-generated IDs."""
         if not self.service: return
-
         self.header_map = self._get_or_create_headers()
         now = time.strftime('%Y-%m-%d %H:%M:%S')
+        all_rows = []
 
         for i, item in enumerate(items):
             item_id = item_ids[i]
             row_data = [""] * len(self.BASE_SCHEMA)
             
-            # Fill Fixed / Audit Columns
-            row_data[self.header_map["Barcode ID"]] = item_id
-            row_data[self.header_map["Created At"]] = now
-            row_data[self.header_map["Created By"]] = user_email
+            row_data[0] = item.get('Product Name') or header.get('Product Name') or "Unknown Item"
+            row_data[1] = item.get('Product Code') or header.get('Product Code') or item_id[:8]
+            row_data[2] = item.get('Quantity Received') or header.get('Quantity Received') or "0"
+            row_data[3] = item.get('Unit') or header.get('Unit') or "PCS"
+            row_data[4] = "" 
+            row_data[19] = item_id # Barcode ID
+            row_data[20] = now
+            row_data[21] = user_email
+            row_data[22] = now
+            row_data[23] = user_email
             
-            # Fill Elite Columns
-            for key in self.BASE_SCHEMA[5:]:
-                val = header.get(key) or item.get(key)
-                if val:
-                    idx = self.header_map[key]
-                    row_data[idx] = val
-
-            # MERGE LOGIC (Anchor: Product Code)
-            p_code_idx = self.header_map["Product Code"]
-            p_code = item.get("Product Code", "N/A")
+            for key in self.BASE_SCHEMA[5:19]:
+                idx = self.header_map.get(key)
+                if idx is not None:
+                    row_data[idx] = header.get(key) or item.get(key) or ""
             
-            existing_row_idx = self._find_row_by_col(p_code_idx, p_code)
+            all_rows.append(row_data)
+            p_code = row_data[1]
+            existing_row_idx = self._find_row_by_col(1, p_code) # Search Column B
 
             if existing_row_idx != -1:
                 self._merge_into_row_elite(existing_row_idx, item, user_email)
             else:
                 self._append_row('Stock Register', row_data)
             
-            # Record Movement & Summary
-            batch = item.get('Batch Number', 'N/A')
             trans_id = header.get('Invoice Number', 'TRANS-NEW')
-            raw_qty = item.get('Quantity Received', '0')
-            numeric_qty = self._parse_numeric(raw_qty) or 0.0
-
-            # Distribution Sync
+            raw_qty = self._parse_numeric(row_data[2])
+            
             distributions = item.get('distributions', [])
-            for dist in distributions:
-                wh = dist.get('warehouse', 'Main Warehouse')
-                loc = dist.get('location', 'Full Receive')
-                l_qty = dist.get('qty', 0)
-                d_id = dist.get('dist_id', 'AUTO')
-                wh_id = dist.get('warehouse_id', 'N/A')
-                self.add_movement(item_id, f"{trans_id} (Batch: {batch})", 'IN', l_qty, user_email, warehouse=wh, location=loc, dist_id=d_id, warehouse_id=wh_id)
-                self._update_summary(p_code, item.get('Product Name', 'N/A'), l_qty, item.get('Unit', 'PCS'), 'IN')
+            if not distributions:
+                # Add default movement if no spatial distribution provided
+                self.add_movement(item_id, trans_id, 'IN', raw_qty, user_email)
+                self._update_summary(p_code, row_data[0], raw_qty, row_data[3], 'IN')
+            else:
+                for dist in distributions:
+                    wh = dist.get('warehouse', 'Main Warehouse')
+                    loc = dist.get('location', 'Full Receive')
+                    l_qty = self._parse_numeric(dist.get('qty', 0))
+                    self.add_movement(item_id, trans_id, 'IN', l_qty, user_email, warehouse=wh, location=loc)
+                    self._update_summary(p_code, row_data[0], l_qty, row_data[3], 'IN')
+
+    def add_movement(self, barcode_id: str, trans_id: str, type: str, qty: float, user_email: str, warehouse: str = "Main Warehouse", location: str = "Full Receive", dist_id: str = "N/A", warehouse_id: str = "N/A"):
+        if not self.service: return
+        now = time.strftime('%Y-%m-%d %H:%M:%S')
+        item_name = "Audit Item"
+        try:
+             res = self.service.spreadsheets().values().get(spreadsheetId=self.spreadsheet_id, range='Stock Register!A:B').execute()
+             rows = res.get('values', [])
+             for r in rows:
+                 if len(r) > 1 and r[1] == barcode_id:
+                     item_name = r[0]
+                     break
+        except: pass
+
+        movement_row = [
+            now, item_name, type, qty, warehouse, location, user_email,
+            f"MOV-{str(uuid.uuid4())[:6].upper()}", barcode_id, trans_id, dist_id, warehouse_id
+        ]
+        self._append_row('Stock Movements', movement_row)
 
     def _update_summary(self, code: str, name: str, qty: float, unit: str, move_type: str):
-        """Calculates real-time running balances in the Stock Summary sheet."""
         if not self.service: return
         try:
-            # 1. Find product in Summary
-            res = self.service.spreadsheets().values().get(
-                spreadsheetId=self.spreadsheet_id, range='Stock Summary!A:A'
-            ).execute()
+            res = self.service.spreadsheets().values().get(spreadsheetId=self.spreadsheet_id, range='Stock Summary!B:B').execute()
             codes = [row[0] for row in res.get('values', [])] if res.get('values') else []
             
             row_idx = -1
@@ -246,281 +268,138 @@ class SheetsService:
                     break
             
             if row_idx == -1:
-                # Create New Summary Row
                 received = qty if move_type == 'IN' else 0
                 dispatched = qty if move_type == 'OUT' else 0
                 balance = received - dispatched
-                new_row = [code, name, received, dispatched, balance, unit]
+                new_row = [name, code, balance, unit, received, dispatched, time.strftime('%Y-%m-%d %H:%M:%S')]
                 self._append_row('Stock Summary', new_row)
             else:
-                # Update Existing Summary Row
-                # Columns: A:Code, B:Name, C:Received, D:Dispatched, E:Balance, F:Unit
-                range_name = f'Stock Summary!C{row_idx}:E{row_idx}'
-                current = self.service.spreadsheets().values().get(
-                    spreadsheetId=self.spreadsheet_id, range=range_name
-                ).execute().get('values', [[0, 0, 0]])[0]
+                range_name = f'Stock Summary!C{row_idx}:F{row_idx}'
+                current = self.service.spreadsheets().values().get(spreadsheetId=self.spreadsheet_id, range=range_name).execute().get('values', [[0, 0, 0, 0]])[0]
                 
-                received = float(current[0])
-                dispatched = float(current[1])
+                balance = float(current[0])
+                received = float(current[2])
+                dispatched = float(current[3])
                 
-                if move_type == 'IN': received += qty
-                else: dispatched += qty
+                if move_type == 'IN': 
+                    received += qty
+                    balance += qty
+                else: 
+                    dispatched += qty
+                    balance -= qty
                 
-                balance = received - dispatched
                 self.service.spreadsheets().values().update(
                     spreadsheetId=self.spreadsheet_id, range=range_name,
-                    valueInputOption='USER_ENTERED', body={'values': [[received, dispatched, balance]]}
+                    valueInputOption='USER_ENTERED', body={'values': [[balance, unit, received, dispatched]]}
                 ).execute()
         except Exception as e:
             print(f"Summary Update Error: {e}")
 
     def _merge_into_row_elite(self, row_idx: int, new_item: Dict, user_email: str) -> str:
-        """Standardized Elite Merge: Sum Quantity + Update Audit Fields"""
         try:
-            qty_idx = self.header_map["Quantity Received"]
-            upd_at_idx = self.header_map["Updated At"]
-            upd_by_idx = self.header_map["Updated By"]
+            col_letter = "C" # Quantity Received
+            result = self.service.spreadsheets().values().get(spreadsheetId=self.spreadsheet_id, range=f'Stock Register!{col_letter}{row_idx}').execute()
+            old_qty = self._parse_numeric(result.get('values', [[0]])[0][0])
+            new_qty = self._parse_numeric(new_item.get('Quantity Received', '0'))
             
-            # 1. Fetch current quantity
-            col_letter = chr(65 + qty_idx)
-            result = self.service.spreadsheets().values().get(
-                spreadsheetId=self.spreadsheet_id, range=f'Stock Register!{col_letter}{row_idx}'
-            ).execute()
-            old_qty_str = result.get('values', [[0]])[0][0]
-            old_qty = self._parse_numeric(old_qty_str)
-            
-            raw_new_qty = new_item.get('Quantity Received', '0')
-            new_qty_parsed = self._parse_numeric(raw_new_qty)
-            
-            # For the summary, we store the new calculated text if it was a hybrid, 
-            # but for simplicity we'll just sum the numeric parts for now 
-            # and append the new raw text for audit.
-            final_qty_val = old_qty + new_qty_parsed
+            final_qty = old_qty + new_qty
             now = time.strftime('%Y-%m-%d %H:%M:%S')
 
-            # 2. Update Quantity + Updated At + Updated By
-            # Note: We use individual updates to be safer with column mapping
-            self.service.spreadsheets().values().update(
-                spreadsheetId=self.spreadsheet_id, range=f'Stock Register!{chr(65+qty_idx)}{row_idx}',
-                valueInputOption='USER_ENTERED', body={'values': [[final_qty_val]]}
-            ).execute()
+            self.service.spreadsheets().values().update(spreadsheetId=self.spreadsheet_id, range=f'Stock Register!{col_letter}{row_idx}', valueInputOption='USER_ENTERED', body={'values': [[final_qty]]}).execute()
+            self.service.spreadsheets().values().update(spreadsheetId=self.spreadsheet_id, range=f'Stock Register!W{row_idx}:X{row_idx}', valueInputOption='USER_ENTERED', body={'values': [[now, user_email]]}).execute()
             
-            self.service.spreadsheets().values().update(
-                spreadsheetId=self.spreadsheet_id, range=f'Stock Register!{chr(65+upd_at_idx)}{row_idx}:{chr(65+upd_by_idx)}{row_idx}',
-                valueInputOption='USER_ENTERED', body={'values': [[now, user_email]]}
-            ).execute()
-            
-            # 3. Get item_id from the first column
-            res_id = self.service.spreadsheets().values().get(
-                spreadsheetId=self.spreadsheet_id, range=f'Stock Register!A{row_idx}'
-            ).execute().get('values', [['UNKNOWN']])[0][0]
-            
+            res_id = self.service.spreadsheets().values().get(spreadsheetId=self.spreadsheet_id, range=f'Stock Register!T{row_idx}').execute().get('values', [['UNKNOWN']])[0][0]
             return res_id
         except: return "ERROR-MERGE"
 
-    def _find_row_by_col(self, col_idx: int, value: str) -> int:
-        if not self.service: return -1
-        col_letter = chr(65 + col_idx) if col_idx < 26 else "Z"
-        try:
-            result = self.service.spreadsheets().values().get(
-                spreadsheetId=self.spreadsheet_id, range=f'Stock Register!{col_letter}:{col_letter}'
-            ).execute()
-            values = result.get('values', [])
-            for i, row in enumerate(values):
-                if row and str(row[0]) == str(value):
-                    return i + 1
-            return -1
-        except: return -1
-
-    def _append_row(self, sheet_name: str, row_data: List):
-        try:
-            self.service.spreadsheets().values().append(
-                spreadsheetId=self.spreadsheet_id, range=f'{sheet_name}!A:A',
-                valueInputOption='USER_ENTERED', body={'values': [row_data]}
-            ).execute()
-        except: pass
-
-    def add_movement(self, stock_item_id: str, trans_id: str, type: str, qty: float, user_email: str, 
-                     warehouse: str = "Main Warehouse", location: str = "Full Receive", dist_id: str = "N/A", warehouse_id: str = "N/A"):
-        now_str = time.strftime('%Y-%m-%d %H:%M:%S')
-        if self.service:
-            # Row mapping for Location-Aware Movements (Standard Columns: A-K)
-            row = [str(uuid.uuid4())[:8].upper(), stock_item_id, trans_id, type, qty, warehouse, location, user_email, now_str, dist_id, warehouse_id]
-            self._append_row('Stock Movements', row)
-            
-            # Sync to Summary
-            item = self.get_stock_item(stock_item_id)
-            if item:
-                try:
-                    qty_float = float(qty)
-                except (ValueError, TypeError):
-                    qty_float = 0.0
-                self._update_summary(item['product_code'], item['item_name'], abs(qty_float), item['unit'], type)
-        try:
-            db.collection('activity_logs').add({
-                'stock_item_id': stock_item_id, 'transaction_id': trans_id,
-                'movement_type': type, 'quantity_changed': qty, 'location': location,
-                'actor_email': user_email, 'created_at': int(time.time()), 'item_name': 'Audit Move'
-            })
-        except: pass
-
     def update_barcode_link(self, barcode_id: str, link: str):
-        """Finds a stock row by its ID and updates the Barcode Link column."""
         if not self.service: return
         try:
-            row_idx = self._find_row_by_col(0, barcode_id)
+            row_idx = self._find_row_by_col(19, barcode_id) # Column T
             if row_idx != -1:
-                col_idx = self.header_map.get("Barcode Link", 23)
-                col_letter = chr(65 + col_idx) if col_idx < 26 else "X"
-                self.service.spreadsheets().values().update(
-                    spreadsheetId=self.spreadsheet_id, range=f'Stock Register!{col_letter}{row_idx}',
-                    valueInputOption='USER_ENTERED', body={'values': [[link]]}
-                ).execute()
-        except Exception as e:
-            print(f"Update Link Error: {e}")
+                self.service.spreadsheets().values().update(spreadsheetId=self.spreadsheet_id, range=f'Stock Register!E{row_idx}', valueInputOption='USER_ENTERED', body={'values': [[link]]}).execute()
+        except: pass
             
     def update_stock_quantity(self, barcode_id: str, new_qty: float):
-        """Standardized Deduct: Finds row by ID and updates the Quantity column."""
         if not self.service: return
         try:
-            row_idx = self._find_row_by_col(0, barcode_id) # Column A is Barcode ID
+            row_idx = self._find_row_by_col(19, barcode_id)
             if row_idx != -1:
-                qty_idx = self.header_map["Quantity Received"]
-                col_letter = chr(65 + qty_idx)
-                self.service.spreadsheets().values().update(
-                    spreadsheetId=self.spreadsheet_id, range=f'Stock Register!{col_letter}{row_idx}',
-                    valueInputOption='USER_ENTERED', body={'values': [[new_qty]]}
-                ).execute()
-        except Exception as e:
-            print(f"Update Qty Error: {e}")
+                self.service.spreadsheets().values().update(spreadsheetId=self.spreadsheet_id, range=f'Stock Register!C{row_idx}', valueInputOption='USER_ENTERED', body={'values': [[new_qty]]}).execute()
+        except: pass
 
     def get_summary_stats(self, period: str = "all") -> Dict:
-        """Aggregates totals from the Stock Summary sheet for the Dashboard."""
         if not self.service: return {"total_in": 0, "total_out": 0, "available_balance": 0, "low_stock_count": 0}
-        
         try:
-            # 1. Get Current Inventory Snapshot (Always from Summary Sheet)
-            res = self.service.spreadsheets().values().get(
-                spreadsheetId=self.spreadsheet_id, range='Stock Summary!C:E'
-            ).execute()
-            rows = res.get('values', [])[1:] # Skip headers
+            res = self.service.spreadsheets().values().get(spreadsheetId=self.spreadsheet_id, range='Stock Summary!C:F').execute()
+            rows = res.get('values', [])[1:]
             
-            all_time_in = 0.0
-            all_time_out = 0.0
-            low_stock = 0
+            total_in = 0.0
+            total_out = 0.0
+            balance = 0.0
+            low_count = 0
             
             for row in rows:
-                if len(row) >= 3:
-                    tin = self._parse_numeric(row[0])
-                    tout = self._parse_numeric(row[1])
-                    bal = self._parse_numeric(row[2])
-                    all_time_in += tin
-                    all_time_out += tout
-                    if bal < 10: low_stock += 1
+                if len(row) >= 4:
+                    bal = self._parse_numeric(row[0])
+                    tin = self._parse_numeric(row[2])
+                    tout = self._parse_numeric(row[3])
+                    total_in += tin
+                    total_out += tout
+                    balance += bal
+                    if bal < 10: low_count += 1
 
-            if period == "today":
-                # 2. Get Today's Activity from Movements Sheet
-                today_str = datetime.now().strftime('%Y-%m-%d')
-                move_res = self.service.spreadsheets().values().get(
-                    spreadsheetId=self.spreadsheet_id, range='Stock Movements!D:H'
-                ).execute()
-                move_rows = move_res.get('values', [])[1:] # Skip headers
-                
-                today_in = 0.0
-                today_out = 0.0
-                
-                for m_row in move_rows:
-                    if len(m_row) >= 5:
-                        m_type = m_row[0] # Type
-                        m_qty = abs(self._parse_numeric(m_row[1])) # Quantity
-                        m_ts = m_row[4] # Timestamp (YYYY-MM-DD HH:MM:SS)
-                        
-                        if m_ts.startswith(today_str):
-                            if m_type == 'IN': today_in += m_qty
-                            elif m_type == 'OUT': today_out += m_qty
-                
-                return {
-                    "total_in": today_in,
-                    "total_out": today_out,
-                    "available_balance": all_time_in - all_time_out, # Balance is always current state
-                    "low_stock_count": low_stock
-                }
-            
-            # Default: Return All-Time Stats
-            return {
-                "total_in": all_time_in,
-                "total_out": all_time_out,
-                "available_balance": all_time_in - all_time_out,
-                "low_stock_count": low_stock
-            }
-        except Exception as e:
-            print(f"Summary Fetch Error: {e}")
-            return {"total_in": 0, "total_out": 0, "available_balance": 0, "low_stock_count": 0}
+            return {"total_in": total_in, "total_out": total_out, "available_balance": balance, "low_stock_count": low_count}
+        except: return {"total_in": 0, "total_out": 0, "available_balance": 0, "low_stock_count": 0}
 
     def get_graph_data(self) -> Dict:
-        """Generates 7-day time-series data and zone distribution for charts."""
         if not self.service: return {"movement": [], "zones": []}
-        
         try:
-            # 1. Stock Movement (Last 7 Days)
-            move_res = self.service.spreadsheets().values().get(
-                spreadsheetId=self.spreadsheet_id, range='Stock Movements!D:H'
-            ).execute()
+            move_res = self.service.spreadsheets().values().get(spreadsheetId=self.spreadsheet_id, range='Stock Movements!A:D').execute()
             move_rows = move_res.get('values', [])[1:]
             
-            days = []
-            for i in range(6, -1, -1):
-                days.append((datetime.now() - timedelta(days=i)).strftime('%Y-%m-%d'))
-            
+            days = [(datetime.now() - timedelta(days=i)).strftime('%Y-%m-%d') for i in range(6, -1, -1)]
             movement_data = {d: {"in": 0.0, "out": 0.0} for d in days}
             
             for row in move_rows:
-                if len(row) >= 5:
-                    m_type, m_qty, m_ts = row[0], abs(self._parse_numeric(row[1])), row[4]
-                    d_key = m_ts.split(' ')[0]
+                if len(row) >= 4:
+                    ts, m_type, m_qty = row[0], row[2], abs(self._parse_numeric(row[3]))
+                    d_key = ts.split(' ')[0]
                     if d_key in movement_data:
                         if m_type == 'IN': movement_data[d_key]["in"] += m_qty
                         elif m_type == 'OUT': movement_data[d_key]["out"] += m_qty
             
-            # 2. Zone Distribution
-            # We get this from Firestore for real-time spatial accuracy
             from app.services.inventory import inventory_service
-            zones_data = inventory_service.get_all_zones()
-            
-            return {
-                "movement": [{"date": d, "in": v["in"], "out": v["out"]} for d, v in movement_data.items()],
-                "zones": zones_data # List of {name: str, total_stock: float}
-            }
-        except Exception as e:
-            print(f"Graph Data Error: {e}")
-            return {"movement": [], "zones": []}
+            return {"movement": [{"date": d, "in": v["in"], "out": v["out"]} for d, v in movement_data.items()], "zones": inventory_service.get_all_zones()}
+        except: return {"movement": [], "zones": []}
 
     def get_stock_item(self, item_id: str) -> Dict:
         if not self.service: return {}
         try:
-            result = self.service.spreadsheets().values().get(
-                spreadsheetId=self.spreadsheet_id, range='Stock Register!A:V'
-            ).execute().get('values', [])
+            result = self.service.spreadsheets().values().get(spreadsheetId=self.spreadsheet_id, range='Stock Register!A:T').execute().get('values', [])
             for row in result:
-                if row and row[0] == item_id:
-                    return {
-                        "stock_item_id": row[0], "item_name": row[10], # Product Name
-                        "quantity_remaining": float(row[12]), # Quantity Received
-                        "unit": row[13], "supplier_name": row[7], "product_code": row[9]
-                    }
+                if row and len(row) >= 20 and row[19] == item_id:
+                    return {"stock_item_id": row[19], "item_name": row[0], "quantity_remaining": self._parse_numeric(row[2]), "unit": row[3], "supplier_name": row[5], "product_code": row[1]}
         except: pass
         return {}
 
+    def _find_row_by_col(self, col_idx: int, value: str) -> int:
+        if not self.service: return -1
+        col_letter = chr(65 + col_idx)
+        try:
+            result = self.service.spreadsheets().values().get(spreadsheetId=self.spreadsheet_id, range=f'Stock Register!{col_letter}:{col_letter}').execute()
+            values = result.get('values', [])
+            for i, row in enumerate(values):
+                if row and str(row[0]).strip() == str(value).strip():
+                    return i + 1
+            return -1
+        except: return -1
+
     def _parse_numeric(self, val: any) -> float:
-        """Extracts the first floating point number from a string (e.g. '7.675 MT' -> 7.675)"""
         if isinstance(val, (int, float)): return float(val)
         try:
             matches = re.findall(r"[-+]?\d*\.\d+|\d+", str(val))
             return float(matches[0]) if matches else 0.0
         except: return 0.0
-
-    def get_current_headers(self) -> List[str]:
-        """Returns the base schema for AI audit context."""
-        return self.BASE_SCHEMA
 
 sheets_service = SheetsService()
