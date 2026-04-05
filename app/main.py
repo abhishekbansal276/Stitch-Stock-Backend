@@ -85,11 +85,16 @@ async def create_stock(
     try:
         header = payload.get('header', {})
         items = payload.get('items', [])
-        
         user_display = user.get('full_name', user['email'])
-        item_ids = sheets_service.save_stock(header, items, user_display)
         
-        # 2. Persist Spatial Positions to Firestore
+        # 1. GENERATE IDs UPFRONT - For $O(1)$ instantaneous return
+        item_ids = []
+        for item in items:
+            item_id = f"STK-{int(time.time())}-{uuid.uuid4().hex[:4].upper()}"
+            item_ids.append(item_id)
+            item['id'] = item_id # Inject ID for background processing
+        
+        # 2. FIRESTORE PERSISTENCE (Near Instant)
         for i, item_id in enumerate(item_ids):
             item_data = items[i]
             distributions = item_data.get('distributions', [
@@ -101,39 +106,51 @@ async def create_stock(
                 item_data.get('Unit', 'PCS'),
                 distributions
             )
-            
-            # 2.5. ASYNC: Generate/Upload Barcode to Drive & Update Sheets
-            background_tasks.add_task(
-                _process_barcode_archiving, 
-                item_id, 
-                item_data.get('Product Name', 'Stock Item')
-            )
         
-        # 3. Log Activity & Notify Admins
+        # 3. BACKGROUND TASKS (Heavy / Slow Operations)
+        background_tasks.add_task(_process_async_ingestion, header, items, item_ids, user)
+        
+        return {
+            "message": "Processing started. Stock will appear in ledger shortly.", 
+            "status": "success",
+            "stock_item_ids": item_ids
+        }
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=400, detail=f"Ingestion failed: {str(e)}")
+
+async def _process_async_ingestion(header: dict, items: list, item_ids: list, user: dict):
+    """Heavy lifted background task for ledger sync and audit logging."""
+    try:
+        user_display = user.get('full_name', user['email'])
+        
+        # 1. Update Google Sheets Ledger (Previously 502 culprit)
+        # We pass fixed item_ids to ensure consistency with Firestore
+        sheets_service.save_stock_batch(header, items, item_ids, user_display)
+        
+        # 2. Activity Logs & Notifications
         for i, item_id in enumerate(item_ids):
             item_data = items[i]
+            qty_val = 0.0
+            try: qty_val = float(item_data.get('Quantity Received', 0))
+            except: pass
             
-            raw_qty = item_data.get('Quantity Received', 0)
-            try:
-                qty_val = float(raw_qty)
-            except (ValueError, TypeError):
-                qty_val = 0.0
-                
             activity_service.log_and_notify(
                 user=user,
                 action_type="IN",
                 item_name=item_data.get('Product Name', 'New Stock'),
                 product_code=item_data.get('Product Code', 'N/A'),
                 qty_change=qty_val,
-                location="Main Floor", # Primary Entry
+                location="Main Floor",
                 description=item_data.get('Description', '')
             )
-        
-        return {"message": "Stock created successfully", "stock_item_ids": item_ids}
+            
+            # 3. Barcode Archiving (Nested Background)
+            _process_barcode_archiving(item_id, item_data.get('Product Name', 'Stock Item'))
+            
     except Exception as e:
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=400, detail=f"Creation failed: {str(e)}")
+        print(f"ASYNC INGESTION FAILED: {e}")
 
 def _process_barcode_archiving(item_id: str, item_name: str):
     """Internal helper to generate/upload barcode and update sheets in background."""

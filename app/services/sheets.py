@@ -32,6 +32,9 @@ class SheetsService:
         self.scopes = ['https://www.googleapis.com/auth/spreadsheets']
         self.service = self._initialize_service()
         self.header_map = {name: i for i, name in enumerate(self.BASE_SCHEMA)}
+        self._cache_expiry = 0
+        self._cached_header_map = {}
+        self._sheet_ids_cache = {}
 
     def _initialize_service(self):
         b64_key = os.getenv("FIREBASE_SERVICE_ACCOUNT_B64")
@@ -53,8 +56,13 @@ class SheetsService:
         return None
 
     def _get_or_create_headers(self) -> Dict:
-        """Initializes all sheets for the Elite Stock Infrastructure."""
+        """Initializes all sheets for the Elite Stock Infrastructure with $O(1)$ result caching."""
         if not self.service: return {}
+        
+        # O(1) Cache Lookup (5-minute TTL)
+        if self._cached_header_map and time.time() < self._cache_expiry:
+            return self._cached_header_map
+
         try:
             # 1. Main Stock Register
             self._ensure_sheet('Stock Register', self.BASE_SCHEMA)
@@ -63,10 +71,16 @@ class SheetsService:
             # 3. Stock Summary
             self._ensure_sheet('Stock Summary', self.SUMMARY_SCHEMA)
 
-            return {name: i for i, name in enumerate(self.BASE_SCHEMA)}
+            self._cached_header_map = {name: i for i, name in enumerate(self.BASE_SCHEMA)}
+            self._cache_expiry = time.time() + 300 # 5 min cache
+            return self._cached_header_map
         except Exception as e:
             print(f"Header Init Error: {e}")
             return self.header_map
+
+    def get_current_headers(self) -> List[str]:
+        """Public method to fetch available headers (used by OCR for mapping)."""
+        return self.BASE_SCHEMA
 
     def _ensure_sheet(self, title: str, schema: List[str]):
         """Detects if a sheet exists, if not creates it with standard styling."""
@@ -164,16 +178,15 @@ class SheetsService:
             self.service.spreadsheets().batchUpdate(spreadsheetId=self.spreadsheet_id, body={'requests': requests}).execute()
         except: pass
 
-    def save_stock(self, header: Dict, items: List[Dict], user_email: str) -> List[str]:
-        if not self.service:
-            return [f"MOCK-{uuid.uuid4().hex[:6]}" for _ in items]
+    def save_stock_batch(self, header: Dict, items: List[Dict], item_ids: List[str], user_email: str):
+        """Async-compatible batch save using pre-generated IDs."""
+        if not self.service: return
 
         self.header_map = self._get_or_create_headers()
-        new_ids = []
         now = time.strftime('%Y-%m-%d %H:%M:%S')
 
-        for item in items:
-            item_id = f"STK-{int(time.time())}-{uuid.uuid4().hex[:4].upper()}"
+        for i, item in enumerate(items):
+            item_id = item_ids[i]
             row_data = [""] * len(self.BASE_SCHEMA)
             
             # Fill Fixed / Audit Columns
@@ -181,10 +194,8 @@ class SheetsService:
             row_data[self.header_map["Created At"]] = now
             row_data[self.header_map["Created By"]] = user_email
             
-            # Fill Elite 17 Columns
-            # We check both the 'header' data and the 'item' data for these fields
-            # Since some like 'Batch Number' are item-level, others like 'Supplier' are header-level.
-            for key in self.BASE_SCHEMA[5:]: # Skip audit columns
+            # Fill Elite Columns
+            for key in self.BASE_SCHEMA[5:]:
                 val = header.get(key) or item.get(key)
                 if val:
                     idx = self.header_map[key]
@@ -197,19 +208,18 @@ class SheetsService:
             existing_row_idx = self._find_row_by_col(p_code_idx, p_code)
 
             if existing_row_idx != -1:
-                item_id = self._merge_into_row_elite(existing_row_idx, item, user_email)
+                self._merge_into_row_elite(existing_row_idx, item, user_email)
             else:
                 self._append_row('Stock Register', row_data)
             
-            # Record Movement
+            # Record Movement & Summary
             batch = item.get('Batch Number', 'N/A')
             trans_id = header.get('Invoice Number', 'TRANS-NEW')
             raw_qty = item.get('Quantity Received', '0')
             numeric_qty = self._parse_numeric(raw_qty) or 0.0
 
-            # Distribution Logic
-            distributions = item.get('distributions', [{'warehouse': 'Main Warehouse', 'location': 'Full Receive', 'qty': numeric_qty, 'dist_id': 'AUTO', 'warehouse_id': 'N/A'}])
-            
+            # Distribution Sync
+            distributions = item.get('distributions', [])
             for dist in distributions:
                 wh = dist.get('warehouse', 'Main Warehouse')
                 loc = dist.get('location', 'Full Receive')
@@ -218,10 +228,6 @@ class SheetsService:
                 wh_id = dist.get('warehouse_id', 'N/A')
                 self.add_movement(item_id, f"{trans_id} (Batch: {batch})", 'IN', l_qty, user_email, warehouse=wh, location=loc, dist_id=d_id, warehouse_id=wh_id)
                 self._update_summary(p_code, item.get('Product Name', 'N/A'), l_qty, item.get('Unit', 'PCS'), 'IN')
-            
-            new_ids.append(item_id)
-
-        return new_ids
 
     def _update_summary(self, code: str, name: str, qty: float, unit: str, move_type: str):
         """Calculates real-time running balances in the Stock Summary sheet."""
