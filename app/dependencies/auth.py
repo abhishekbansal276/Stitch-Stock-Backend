@@ -48,7 +48,21 @@ def get_current_user(authorization: str = Header(...)):
     except auth.ExpiredIdTokenError:
         raise HTTPException(status_code=401, detail="Firebase ID token has expired")
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Authentication error: {str(e)}")
+        import traceback
+        error_type = type(e).__name__
+        error_details = str(e)
+        print(f"!!! AUTH ERROR [{error_type}]: {error_details}")
+        traceback.print_exc()
+        
+        # Friendly error message for specific common issues
+        if "Invalid JWT Signature" in error_details:
+            msg = "Authentication Error: The server credentials (JWT) are invalid. Please check the FIREBASE_SERVICE_ACCOUNT_JSON."
+        elif "Timeout" in error_details:
+            msg = "Authentication Error: Connection to Firebase timed out. Please try again."
+        else:
+            msg = f"Authentication error: {error_details}"
+            
+        raise HTTPException(status_code=500, detail=msg)
 
 
 def require_admin(user: dict = Depends(get_current_user)):
