@@ -8,27 +8,21 @@ class LocationService:
 
     def get_all_locations(self) -> List[Dict]:
         """Fetch all predefined warehouse masters with nested zones."""
-        docs = self.collection.order_by('name').stream()
-        locations = []
-        for doc in docs:
-            data = doc.to_dict()
-            data['id'] = doc.id
-            if 'zones' not in data:
-                data['zones'] = ["Main Floor"]
-            locations.append(data)
-        
-        # Seed default warehouses if none exist
-        if not locations:
-            defaults = [
-                {"name": "Main Warehouse", "zones": ["Main Floor", "Shed 1", "Shed 2"]},
-                {"name": "North Facility", "zones": ["Rack A", "Rack B", "Office"]},
-                {"name": "South Warehouse", "zones": ["Cold Storage", "Loading Dock"]},
-            ]
-            for d in defaults:
-                self.create_location(d['name'], d['zones'])
-            return self.get_all_locations()
+        print("LocationService: Fetching all warehouse locations...")
+        try:
+            docs = self.collection.order_by('name').stream()
+            locations = []
+            for doc in docs:
+                data = doc.to_dict()
+                data['id'] = doc.id
+                if 'zones' not in data:
+                    data['zones'] = ["Main Floor"]
+                locations.append(data)
             
-        return locations
+            return locations
+        except Exception as e:
+            print(f"LocationService ERROR: {e}")
+            raise e
 
     def create_location(self, name: str, zones: List[str] = None) -> str:
         """Add a new warehouse master with optional initial zones."""
