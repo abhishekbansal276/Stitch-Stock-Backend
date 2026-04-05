@@ -30,10 +30,14 @@ def initialize_firebase():
             cred = credentials.Certificate(service_account_path)
             firebase_admin.initialize_app(cred)
             print(f"Firebase initialized from file: {service_account_path}")
-        else:
-            # 3. Fallback to default (GCP environment)
-            firebase_admin.initialize_app()
-            print("Firebase initialized with default credentials.")
+        # 3. No credentials found
+        error_msg = (
+            "FIREBASE AUTH FAILED: No credentials found! "
+            "Please set 'FIREBASE_SERVICE_ACCOUNT_B64' in your cloud environment variables "
+            "or ensure 'serviceAccountKey.json' exists locally."
+        )
+        print(f"FATAL ERROR: {error_msg}")
+        raise ValueError(error_msg)
 
     return firestore.client()
 

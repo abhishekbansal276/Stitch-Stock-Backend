@@ -112,9 +112,10 @@ async def create_stock(
         background_tasks.add_task(_process_async_ingestion, header, items, item_ids, user)
         
         return {
-            "message": "Processing started. Stock will appear in ledger shortly.", 
+            "message": "Stock items and location positions registered.", 
             "status": "success",
-            "stock_item_ids": item_ids
+            "stock_item_ids": item_ids,
+            "items": items # Contains the generated dist_ids
         }
     except Exception as e:
         import traceback
@@ -150,20 +151,43 @@ async def _process_async_ingestion(header: dict, items: list, item_ids: list, us
             # 3. Barcode Archiving (Nested Background)
             _process_barcode_archiving(item_id, item_data.get('Product Name', 'Stock Item'))
             
+            # 2. ENHANCED: Generate QR codes for every physical location
+            for dist in item_data.get('distributions', []):
+                dist_id = dist.get('dist_id')
+                dist_label = f"{item_data.get('Product Name')} @ {dist.get('warehouse')}"
+                if dist_id:
+                    _process_barcode_archiving(dist_id, dist_label, is_position=True, parent_id=item_id)
+            
     except Exception as e:
         print(f"ASYNC INGESTION FAILED: {e}")
 
-def _process_barcode_archiving(item_id: str, item_name: str):
-    """Internal helper to generate/upload barcode and update sheets in background."""
+def _process_barcode_archiving(code_id: str, label: str, is_position: bool = False, parent_id: str = None):
+    """Internal helper to generate/upload QR and update storage in background."""
     try:
-        link = drive_service.generate_and_upload_barcode(item_id, item_name)
+        # Switch to the new Elite QR Generator
+        link = drive_service.generate_qr_code(code_id, label)
         if link:
-            # 1. Update Sheets Ledger
-            sheets_service.update_barcode_link(item_id, link)
-            # 2. Update Firestore for Mobile visibility
-            inventory_service.update_barcode_link(item_id, link)
+            if not is_position:
+                # Main Item ID
+                sheets_service.update_barcode_link(code_id, link)
+                inventory_service.update_barcode_link(code_id, link)
+            else:
+                # Individual Distribution ID
+                # We store the link directly in the position record for instant fetch
+                inventory_service.update_distribution_qr(parent_id, code_id, link)
     except Exception as e:
-        print(f"Background Barcode Error: {e}")
+        print(f"Background QR Error [{code_id}]: {e}")
+
+@app.get("/stock/position/{dist_id}")
+async def get_stock_by_position(
+    dist_id: str,
+    user: dict = Depends(get_current_user)
+):
+    """Fetch main item + target distribution for a shelf-specific QR code."""
+    result = inventory_service.find_by_dist_id(dist_id)
+    if not result:
+        raise HTTPException(status_code=404, detail="Position not found")
+    return result
 
 @app.get("/stock/{stock_item_id}")
 async def get_stock_item(

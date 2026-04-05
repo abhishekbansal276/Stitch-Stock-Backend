@@ -53,6 +53,42 @@ class InventoryService:
             return doc.to_dict()
         return {}
 
+    def update_distribution_qr(self, barcode_id: str, dist_id: str, qr_link: str):
+        """Atomically updates a specific distribution's QR link in Firestore."""
+        doc_ref = self.collection.document(barcode_id)
+        doc = doc_ref.get()
+        if doc.exists:
+            data = doc.to_dict()
+            distributions = data.get('distributions', [])
+            updated = False
+            for d in distributions:
+                if d.get('dist_id') == dist_id:
+                    d['qr_link'] = qr_link
+                    updated = True
+                    break
+            if updated:
+                doc_ref.update({'distributions': distributions})
+
+    def find_by_dist_id(self, dist_id: str) -> Dict:
+        # Query Firestore for any record containing this dist_id in its distributions list
+        query = self.collection.where(
+            u'distributions', u'array_contains_any', 
+            [{'dist_id': dist_id}] # Note: Firestore array-contains with maps requires exact match or collection group index
+        ).limit(1).get()
+        
+        # Fallback: Since Firestore array_contains with maps is complex, we use the searchable 'location_ids'
+        # or we just rely on the fact that scanning a POS code should still fetch the doc if we use a better index.
+        # IMPROVED: We'll use a collectionGroup or just search for the dist_id in the searchable tags.
+        query = self.collection.where('location_ids', 'array_contains', dist_id).limit(1).get()
+        
+        if query:
+            doc = query[0]
+            data = doc.to_dict()
+            # Find the specific distribution in the list
+            target_dist = next((d for d in data.get('distributions', []) if d.get('dist_id') == dist_id), None)
+            return {"item": data, "target_distribution": target_dist}
+        return {}
+
     @firestore.transactional
     def deduct_from_location(self, transaction, doc_ref, loc_id: str, qty: float):
         """Atomic deduction from a specific shelf/zone ID."""
