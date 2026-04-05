@@ -249,7 +249,7 @@ async def get_logs(limit: int = 20, last_ts: int = None, search: str = None, use
 
 @app.get("/warehouse/locations")
 async def get_all_locations(user: dict = Depends(get_current_user)):
-    """Fetch all defined warehouse zones."""
+    """Fetch all defined warehouse masters with nested zones."""
     try:
         return location_service.get_all_locations()
     except Exception as e:
@@ -257,14 +257,31 @@ async def get_all_locations(user: dict = Depends(get_current_user)):
 
 @app.post("/warehouse/locations")
 async def create_location(payload: dict, user: dict = Depends(get_current_user)):
-    """Add a new physical zone with warehouse hierarchy."""
+    """Add a new warehouse master or add a zone to an existing one."""
     try:
+        wh_id = payload.get('warehouse_id')
         zone = payload.get('name')
-        warehouse = payload.get('warehouse', 'Main Warehouse')
-        if not zone:
-            raise HTTPException(status_code=400, detail="Zone name required")
-        loc_id = location_service.create_location(zone, warehouse)
-        return {"id": loc_id, "name": zone, "warehouse": warehouse}
+        
+        if wh_id and zone:
+            # Add Zone to existing Warehouse
+            location_service.add_zone_to_warehouse(wh_id, zone)
+            return {"status": "success", "message": "Zone added"}
+        
+        # Create new Warehouse
+        wh_name = payload.get('warehouse_name')
+        if not wh_name:
+            raise HTTPException(status_code=400, detail="Warehouse name required")
+        
+        loc_id = location_service.create_location(wh_name)
+        return {"id": loc_id, "name": wh_name}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/warehouse/zones")
+async def get_all_zones(user: dict = Depends(get_current_user)):
+    """Aggregate unique hierarchical locations across all stock positions."""
+    try:
+        return inventory_service.get_all_zones()
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

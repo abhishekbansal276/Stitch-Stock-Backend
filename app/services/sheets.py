@@ -21,7 +21,7 @@ class SheetsService:
         "Transporter Name", "Remarks", "Barcode Link"
     ]
     MOVEMENTS_SCHEMA = [
-        "Movement ID", "Barcode ID", "Transaction ID", "Type", "Quantity", "Warehouse", "Location", "User", "Timestamp", "Position ID"
+        "Movement ID", "Barcode ID", "Transaction ID", "Type", "Quantity", "Warehouse", "Location", "User", "Timestamp", "Position ID", "Warehouse ID"
     ]
     SUMMARY_SCHEMA = [
         "Product Code", "Product Name", "Total Received", "Total Dispatched", "Current Balance", "Unit"
@@ -208,14 +208,15 @@ class SheetsService:
             numeric_qty = self._parse_numeric(raw_qty) or 0.0
 
             # Distribution Logic
-            distributions = item.get('distributions', [{'warehouse': 'Main Warehouse', 'location': 'Full Receive', 'qty': numeric_qty, 'dist_id': 'AUTO'}])
+            distributions = item.get('distributions', [{'warehouse': 'Main Warehouse', 'location': 'Full Receive', 'qty': numeric_qty, 'dist_id': 'AUTO', 'warehouse_id': 'N/A'}])
             
             for dist in distributions:
                 wh = dist.get('warehouse', 'Main Warehouse')
                 loc = dist.get('location', 'Full Receive')
                 l_qty = dist.get('qty', 0)
                 d_id = dist.get('dist_id', 'AUTO')
-                self.add_movement(item_id, f"{trans_id} (Batch: {batch})", 'IN', l_qty, user_email, warehouse=wh, location=loc, dist_id=d_id)
+                wh_id = dist.get('warehouse_id', 'N/A')
+                self.add_movement(item_id, f"{trans_id} (Batch: {batch})", 'IN', l_qty, user_email, warehouse=wh, location=loc, dist_id=d_id, warehouse_id=wh_id)
                 self._update_summary(p_code, item.get('Product Name', 'N/A'), l_qty, item.get('Unit', 'PCS'), 'IN')
             
             new_ids.append(item_id)
@@ -334,11 +335,11 @@ class SheetsService:
         except: pass
 
     def add_movement(self, stock_item_id: str, trans_id: str, type: str, qty: float, user_email: str, 
-                     warehouse: str = "Main Warehouse", location: str = "Full Receive", dist_id: str = "N/A"):
+                     warehouse: str = "Main Warehouse", location: str = "Full Receive", dist_id: str = "N/A", warehouse_id: str = "N/A"):
         now_str = time.strftime('%Y-%m-%d %H:%M:%S')
         if self.service:
-            # Row mapping for Location-Aware Movements (Standard Columns: A-J)
-            row = [str(uuid.uuid4())[:8].upper(), stock_item_id, trans_id, type, qty, warehouse, location, user_email, now_str, dist_id]
+            # Row mapping for Location-Aware Movements (Standard Columns: A-K)
+            row = [str(uuid.uuid4())[:8].upper(), stock_item_id, trans_id, type, qty, warehouse, location, user_email, now_str, dist_id, warehouse_id]
             self._append_row('Stock Movements', row)
             
             # Sync to Summary
