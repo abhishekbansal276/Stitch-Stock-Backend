@@ -368,6 +368,42 @@ class SheetsService:
             return -1
         except: return -1
 
+    def get_summary_stats(self, period: str = "all") -> Dict:
+        if not self.service: return {"total_in": 0, "total_out": 0, "available_balance": 0, "low_stock_count": 0}
+        try:
+            res = self.service.spreadsheets().values().get(spreadsheetId=self.spreadsheet_id, range='Stock Summary!C:F').execute()
+            rows = res.get('values', [])[1:]
+            
+            t_in, t_out, t_bal, low_count = 0.0, 0.0, 0.0, 0
+            for row in rows:
+                if len(row) >= 4:
+                    bal, tin, tout = self._parse_numeric(row[0]), self._parse_numeric(row[2]), self._parse_numeric(row[3])
+                    t_in += tin; t_out += tout; t_bal += bal
+                    if bal < 10: low_count += 1
+            return {"total_in": t_in, "total_out": t_out, "available_balance": t_bal, "low_stock_count": low_count}
+        except: return {"total_in": 0, "total_out": 0, "available_balance": 0, "low_stock_count": 0}
+
+    def get_graph_data(self) -> Dict:
+        if not self.service: return {"movement": [], "zones": []}
+        try:
+            move_res = self.service.spreadsheets().values().get(spreadsheetId=self.spreadsheet_id, range='Stock Movements!A:D').execute()
+            move_rows = move_res.get('values', [])[1:]
+            
+            days = [(datetime.now() - timedelta(days=i)).strftime('%Y-%m-%d') for i in range(6, -1, -1)]
+            movement_data = {d: {"in": 0.0, "out": 0.0} for d in days}
+            
+            for row in move_rows:
+                if len(row) >= 4:
+                    ts, m_type, m_qty = row[0], row[2], abs(self._parse_numeric(row[3]))
+                    d_key = ts.split(' ')[0]
+                    if d_key in movement_data:
+                        if m_type == 'IN': movement_data[d_key]["in"] += m_qty
+                        elif m_type == 'OUT': movement_data[d_key]["out"] += m_qty
+            
+            from app.services.inventory import inventory_service
+            return {"movement": [{"date": d, "in": v["in"], "out": v["out"]} for d, v in movement_data.items()], "zones": inventory_service.get_all_zones()}
+        except: return {"movement": [], "zones": []}
+
     def _append_row(self, sheet_name: str, row_data: List):
         try:
             self.service.spreadsheets().values().append(
