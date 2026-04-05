@@ -1,7 +1,7 @@
 from fastapi import Header, HTTPException, Depends
 from firebase_admin import auth
 import time
-from app.services.firebase import db
+
 
 
 def get_current_user(
@@ -33,14 +33,6 @@ def get_current_user(
         # CLIENT-SIDE ROLE TRUST (Performance Opt)
         if not x_user_role:
             print(f"Auth Error: Missing X-User-Role header for {email}.")
-        # Fetch user profile from Firestore
-        print(f"Auth: Fetching profile for {email} from Firestore...")
-        f_start = time.time()
-        user_doc = db.collection("users").document(email).get()
-        print(f"Auth: Profile fetched in {time.time() - f_start:.4f}s")
-        
-        if not user_doc.exists:
-            print(f"Auth Error: Profile for {email} not found in Firestore.")
             raise HTTPException(
                 status_code=401,
                 detail="Authentication Error: Missing user role. Please relogin."
@@ -55,13 +47,6 @@ def get_current_user(
             "full_name": email.split('@')[0].capitalize() # Fallback name
         }
         
-        if not user_data.get("is_active", True):
-            print(f"Auth Error: Account {email} is deactivated.")
-            raise HTTPException(
-                status_code=403,
-                detail="Your account has been deactivated. Contact admin.",
-            )
-            
         return user_data
 
     except HTTPException:
@@ -81,7 +66,11 @@ def get_current_user(
         
         # Friendly error message for specific common issues
         if "Invalid JWT Signature" in error_details:
-            msg = "Authentication Error: The server credentials (JWT) are invalid. Please check the FIREBASE_SERVICE_ACCOUNT_JSON."
+            msg = (
+                "Authentication Configuration Error: The server's Firebase private key has an invalid signature. "
+                "This usually means the FIREBASE_SERVICE_ACCOUNT_JSON or _B64 environment variable is mangled, "
+                "truncated, or has literal '\\n' characters."
+            )
         elif "Timeout" in error_details:
             msg = "Authentication Error: Connection to Firebase timed out. Please try again."
         else:

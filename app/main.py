@@ -247,7 +247,7 @@ async def remove_stock(
             
         # 3. Record Movement (OUT) with Location Tag
         trans_id = payload.get('transaction_id', f"OUT-{int(time.time())}")
-        sheets_service.add_movement(stock_item_id, trans_id, 'OUT', -qty_to_remove, user['email'], location=location_name)
+        sheets_service.add_movement(stock_item_id, trans_id, 'OUT', -qty_to_remove, user['email'], location=loc_name)
         
         # 4. Log Activity & Notify Admins
         activity_service.log_and_notify(
@@ -256,7 +256,7 @@ async def remove_stock(
             item_name=item.get('item_name', 'Stock Item'),
             product_code=item.get('product_code', stock_item_id),
             qty_change=-qty_to_remove,
-            location=location_name,
+            location=loc_name,
             description=item.get('description', '')
         )
         
