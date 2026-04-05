@@ -14,8 +14,10 @@ class OCRService:
         self.api_key = os.getenv("GEMINI_API_KEY")
         if self.api_key:
             self.client = genai.Client(api_key=self.api_key)
-            self.model_name = self._pick_model()
-            print(f"OCRService initialized with model: {self.model_name}")
+            # ELITE FIX: Always use a high-performance model. 
+            # Listing models synchronously can hang during server startup.
+            self.model_name = "gemini-1.5-flash"
+            print(f"OCRService: Initialized with model '{self.model_name}'")
         else:
             print("WARNING: GEMINI_API_KEY not found. OCRService running in MOCK mode.")
             self.client = None
@@ -48,8 +50,13 @@ class OCRService:
         mime_map = {"pdf": "application/pdf", "png": "image/png",
                     "jpg": "image/jpeg", "jpeg": "image/jpeg", "webp": "image/webp"}
         mime_type = mime_map.get(ext, "image/jpeg")
+        print(f"OCRService: Processing '{filename}' (Mime: {mime_type}, Size: {len(content)} bytes)")
 
         try:
+            print(f"OCRService: Requesting Gemini extraction [Model: {self.model_name}]...")
+            import time
+            start_time = time.time()
+            
             response = self.client.models.generate_content(
                 model=self.model_name,
                 contents=[
@@ -63,6 +70,7 @@ class OCRService:
                 ),
             )
 
+            print(f"OCRService: Gemini API responded in {time.time() - start_time:.2f}s")
             raw = response.text.strip()
             # Strip markdown fences if the model ignores response_mime_type
             raw = re.sub(r"^```(?:json)?", "", raw, flags=re.IGNORECASE).strip()
@@ -72,8 +80,10 @@ class OCRService:
             if s != -1 and e != -1:
                 raw = raw[s : e + 1]
 
+            print("OCRService: Parsing raw JSON output...")
             data = json.loads(raw)
             data["items"] = self._consolidate(data.get("items", []))
+            print(f"OCRService: Extraction complete. Found {len(data['items'])} line items.")
             return data
 
         except Exception as e:
