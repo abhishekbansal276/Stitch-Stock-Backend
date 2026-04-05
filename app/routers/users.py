@@ -45,6 +45,28 @@ def create_new_user(user_in: UserCreate, admin: dict = Depends(require_admin)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to create user: {str(e)}")
 
+@router.get("/", response_model=list[UserResponse])
+def list_users(admin: dict = Depends(require_admin)):
+    """Admin-only: List all users from Firestore."""
+    try:
+        users_ref = db.collection('users').stream()
+        return [UserResponse(**u.to_dict()) for u in users_ref]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.patch("/{email}/status")
+def update_user_status(email: str, status: bool, admin: dict = Depends(require_admin)):
+    """Admin-only: Deactivate or Activate a user."""
+    try:
+        user_ref = db.collection('users').document(email)
+        if not user_ref.get().exists:
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        user_ref.update({"is_active": status})
+        return {"message": f"User status updated to {'active' if status else 'inactive'}"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @router.get("/me", response_model=UserResponse)
 def get_me(user: dict = Depends(get_current_user)):
     """

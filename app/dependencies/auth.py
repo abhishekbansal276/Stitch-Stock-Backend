@@ -32,6 +32,13 @@ def get_current_user(authorization: str = Header(...)):
         user_data = user_doc.to_dict()
         user_data["uid"] = uid
         user_data["email"] = email  # Ensure email is always present
+        
+        if not user_data.get("is_active", True):
+            raise HTTPException(
+                status_code=403,
+                detail="Your account has been deactivated. Contact admin.",
+            )
+            
         return user_data
 
     except HTTPException:

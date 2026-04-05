@@ -25,7 +25,9 @@ class StockRemovalRequest(BaseModel):
 
 class StockTransferRequest(BaseModel):
     barcode_id: str
-    from_location: str
-    to_location: str
+    from_location: str # loc_id
+    from_location_name: str
+    to_location: str # loc_id
+    to_location_name: str
     quantity: float
     reason: Optional[str] = "Spatial Relocation"

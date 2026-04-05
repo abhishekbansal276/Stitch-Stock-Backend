@@ -17,7 +17,7 @@ class SheetsService:
         "Product Code", "Product Name", "Batch Number", "Quantity Received", 
         "Unit", "Number of Bags", "Rate per Unit", "Total Amount", "Transport / Freight", 
         "Taxes (IGST/CGST/SGST)", "Final Amount", "Vehicle Number", 
-        "Transporter Name", "Remarks"
+        "Transporter Name", "Remarks", "Barcode Link"
     ]
     MOVEMENTS_SCHEMA = [
         "Movement ID", "Barcode ID", "Transaction ID", "Type", "Quantity", "Location", "User", "Timestamp"
@@ -354,6 +354,21 @@ class SheetsService:
             })
         except: pass
 
+    def update_barcode_link(self, barcode_id: str, link: str):
+        """Finds a stock row by its ID and updates the Barcode Link column."""
+        if not self.service: return
+        try:
+            row_idx = self._find_row_by_col(0, barcode_id)
+            if row_idx != -1:
+                col_idx = self.header_map.get("Barcode Link", 23)
+                col_letter = chr(65 + col_idx) if col_idx < 26 else "X"
+                self.service.spreadsheets().values().update(
+                    spreadsheetId=self.spreadsheet_id, range=f'Stock Register!{col_letter}{row_idx}',
+                    valueInputOption='USER_ENTERED', body={'values': [[link]]}
+                ).execute()
+        except Exception as e:
+            print(f"Update Link Error: {e}")
+            
     def update_stock_quantity(self, barcode_id: str, new_qty: float):
         """Standardized Deduct: Finds row by ID and updates the Quantity column."""
         if not self.service: return

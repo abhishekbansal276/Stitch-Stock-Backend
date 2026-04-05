@@ -8,9 +8,12 @@ from app.services.firebase import initialize_firebase, db
 from app.services.ocr import ocr_service
 from app.services.sheets import sheets_service
 from app.services.inventory import inventory_service
+from app.services.location_service import location_service
 from app.services.activity_service import activity_service
+from app.services.google_drive_service import drive_service
 from app.dependencies.auth import get_current_user
-from app.models.stock import StockTransferRequest # New Professional Model
+from fastapi import BackgroundTasks
+from app.models.stock import StockTransferRequest
 
 # Load environment variables for local development
 load_dotenv()
@@ -72,6 +75,7 @@ async def extract_stock(
 @app.post("/stock/create")
 async def create_stock(
     payload: dict,
+    background_tasks: BackgroundTasks,
     user: dict = Depends(get_current_user)
 ):
     """
@@ -89,13 +93,20 @@ async def create_stock(
         for i, item_id in enumerate(item_ids):
             item_data = items[i]
             distributions = item_data.get('distributions', [
-                {'location': 'Main Floor', 'qty': item_data.get('Quantity Received', 0)}
+                {'loc_id': 'default', 'loc_name': 'Main Floor', 'qty': item_data.get('Quantity Received', 0)}
             ])
             inventory_service.save_position(
                 item_id, item_data.get('Product Name'), 
                 item_data.get('Product Code'), 
                 item_data.get('Unit', 'PCS'),
                 distributions
+            )
+            
+            # 2.5. ASYNC: Generate/Upload Barcode to Drive & Update Sheets
+            background_tasks.add_task(
+                _process_barcode_archiving, 
+                item_id, 
+                item_data.get('Product Name', 'Stock Item')
             )
         
         # 3. Log Activity & Notify Admins
@@ -122,8 +133,16 @@ async def create_stock(
     except Exception as e:
         import traceback
         traceback.print_exc()
-        # Return 400 instead of 500 so Render proxy doesn't potentially drop the body
         raise HTTPException(status_code=400, detail=f"Creation failed: {str(e)}")
+
+def _process_barcode_archiving(item_id: str, item_name: str):
+    """Internal helper to generate/upload barcode and update sheets in background."""
+    try:
+        link = drive_service.generate_and_upload_barcode(item_id, item_name)
+        if link:
+            sheets_service.update_barcode_link(item_id, link)
+    except Exception as e:
+        print(f"Background Barcode Error: {e}")
 
 @app.get("/stock/{stock_item_id}")
 async def get_stock_item(
@@ -154,7 +173,8 @@ async def remove_stock(
     """
     try:
         qty_to_remove = float(payload.get('quantity', 0))
-        location_name = payload.get('location', 'Main Floor')
+        loc_id = payload.get('loc_id', 'default')
+        loc_name = payload.get('location', 'Main Floor')
         usage = payload.get('usage', 'General')
         remarks = payload.get('remarks', '')
         
@@ -163,7 +183,7 @@ async def remove_stock(
             raise HTTPException(status_code=404, detail="Stock item not found")
             
         # 1. Atomic Firestore Deduction (Spatial Map)
-        inventory_service.remove_stock_spatial(stock_item_id, location_name, qty_to_remove)
+        inventory_service.remove_stock_spatial(stock_item_id, loc_id, qty_to_remove)
         
         # 2. Update Sheets Ledger
         new_remaining = item['quantity_remaining'] - qty_to_remove
@@ -215,9 +235,41 @@ async def get_logs(limit: int = 20, last_ts: int = None, search: str = None, use
 
 # --- WAREHOUSE EXPLORER & SPATIAL TRANSFER ---
 
-@app.get("/warehouse/zones")
-async def get_zones(user: dict = Depends(get_current_user)):
-    """Discovery: Returns all physical locations and occupancy stats."""
+@app.get("/warehouse/locations")
+async def get_all_locations(user: dict = Depends(get_current_user)):
+    """Fetch all defined warehouse zones."""
+    try:
+        return location_service.get_all_locations()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/warehouse/locations")
+async def create_location(payload: dict, user: dict = Depends(get_current_user)):
+    """Add a new physical zone."""
+    try:
+        name = payload.get('name')
+        if not name:
+            raise HTTPException(status_code=400, detail="Name required")
+        loc_id = location_service.create_location(name)
+        return {"id": loc_id, "name": name}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/warehouse/inventory-report")
+async def get_inventory_report(user: dict = Depends(get_current_user)):
+    """Full Visibility: All products and their locations."""
+    try:
+        return inventory_service.get_inventory_summary()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/warehouse/items")
+async def get_items_in_zone(loc_id: str, user: dict = Depends(get_current_user)):
+    """Drill-down: Returns all items sitting in a specific physical ID."""
+    try:
+        return inventory_service.get_items_in_zone(loc_id)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
     try:
         return inventory_service.get_all_zones()
     except Exception as e:
@@ -244,12 +296,12 @@ async def transfer_stock_position(req: StockTransferRequest, user: dict = Depend
 
         # 1. Update Firestore Atomic Map
         inventory_service.transfer_stock(
-            req.barcode_id, req.from_location, req.to_location, req.quantity
+            req.barcode_id, req.from_location, req.to_location, req.to_location_name, req.quantity
         )
         
         # 2. Log to Google Sheets Movements (Audit)
         # Format: "Zone A -> Zone B" for spatial traceability
-        loc_audit = f"{req.from_location} ➔ {req.to_location}"
+        loc_audit = f"{req.from_location_name} ➔ {req.to_location_name}"
         sheets_service.add_movement(
             req.barcode_id, 
             req.reason or "WMS-TRANSFER", 
@@ -273,6 +325,76 @@ async def transfer_stock_position(req: StockTransferRequest, user: dict = Depend
         return {"status": "success", "message": f"Stock moved to {req.to_location} successfully."}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+@app.post("/stock/{stock_item_id}/min-stock")
+async def update_min_stock(
+    stock_item_id: str,
+    payload: dict,
+    user: dict = Depends(get_current_user)
+):
+    """Admin only: Set the minimum stock threshold for alerts."""
+    if user.get('role') != 'admin':
+        raise HTTPException(status_code=403, detail="Admin access required")
+    
+    try:
+        min_level = float(payload.get('min_stock', 0))
+        inventory_service.set_min_stock_level(stock_item_id, min_level)
+        return {"status": "success", "min_stock_level": min_level}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# --- Alert Recipient Management (Dynamic) ---
+
+@app.get("/admin/alert-emails")
+async def get_alert_emails(user: dict = Depends(get_current_user)):
+    """Fetch the global list of email recipients for low-stock alerts."""
+    if user.get('role') != 'admin':
+        raise HTTPException(status_code=403, detail="Admin access required")
+    try:
+        doc = db.collection('senttoemail').document('recipients').get()
+        if not doc.exists:
+            # Initialize if not present
+            db.collection('senttoemail').document('recipients').set({'emails': []})
+            return []
+        return doc.to_dict().get('emails', [])
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/admin/alert-emails/add")
+async def add_alert_email(payload: dict, user: dict = Depends(get_current_user)):
+    """Add a new email to the alert recipient list."""
+    if user.get('role') != 'admin':
+        raise HTTPException(status_code=403, detail="Admin access required")
+    try:
+        email = payload.get('email')
+        if not email:
+            raise HTTPException(status_code=400, detail="Email required")
+            
+        from google.cloud import firestore
+        db.collection('senttoemail').document('recipients').update({
+            'emails': firestore.ArrayUnion([email])
+        })
+        return {"status": "success"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/admin/alert-emails/remove")
+async def remove_alert_email(payload: dict, user: dict = Depends(get_current_user)):
+    """Remove an email from the alert recipient list."""
+    if user.get('role') != 'admin':
+        raise HTTPException(status_code=403, detail="Admin access required")
+    try:
+        email = payload.get('email')
+        if not email:
+            raise HTTPException(status_code=400, detail="Email required")
+            
+        from google.cloud import firestore
+        db.collection('senttoemail').document('recipients').update({
+            'emails': firestore.ArrayRemove([email])
+        })
+        return {"status": "success"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
     import uvicorn
