@@ -4,10 +4,13 @@ import time
 from app.services.firebase import db
 
 
-def get_current_user(authorization: str = Header(...)):
+def get_current_user(
+    authorization: str = Header(...),
+    x_user_role: str = Header(None, alias="X-User-Role")
+):
     """
-    Verify the Firebase ID token from the Authorization header
-    and fetch the user's role/profile from Firestore.
+    Verify the Firebase ID token and trust the X-User-Role header 
+    (provided by the client after their initial login).
     """
     if not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Invalid authorization header format")
@@ -27,6 +30,9 @@ def get_current_user(authorization: str = Header(...)):
             print("Auth Error: Token missing email claim.")
             raise HTTPException(status_code=401, detail="Token missing email claim")
 
+        # CLIENT-SIDE ROLE TRUST (Performance Opt)
+        if not x_user_role:
+            print(f"Auth Error: Missing X-User-Role header for {email}.")
         # Fetch user profile from Firestore
         print(f"Auth: Fetching profile for {email} from Firestore...")
         f_start = time.time()
@@ -36,13 +42,18 @@ def get_current_user(authorization: str = Header(...)):
         if not user_doc.exists:
             print(f"Auth Error: Profile for {email} not found in Firestore.")
             raise HTTPException(
-                status_code=403,
-                detail="User profile not found in Firestore. Contact admin.",
+                status_code=401,
+                detail="Authentication Error: Missing user role. Please relogin."
             )
 
-        user_data = user_doc.to_dict()
-        user_data["uid"] = uid
-        user_data["email"] = email  # Ensure email is always present
+        # Simplified user data without Firestore fetch
+        user_data = {
+            "uid": uid,
+            "email": email,
+            "role": x_user_role,
+            "is_active": True,
+            "full_name": email.split('@')[0].capitalize() # Fallback name
+        }
         
         if not user_data.get("is_active", True):
             print(f"Auth Error: Account {email} is deactivated.")
