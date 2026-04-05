@@ -280,6 +280,19 @@ async def create_location(payload: dict, user: dict = Depends(get_current_user))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.patch("/warehouse/locations/{wh_id}/zones/{old_name}")
+async def rename_zone_endpoint(wh_id: str, old_name: str, payload: dict, user: dict = Depends(get_current_user)):
+    """Rename a specific zone inside a warehouse master."""
+    try:
+        new_name = payload.get('new_name')
+        if not new_name:
+            raise HTTPException(status_code=400, detail="New name required")
+        
+        location_service.rename_zone(wh_id, old_name, new_name)
+        return {"status": "success", "message": "Zone renamed"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.get("/warehouse/zones")
 async def get_all_zones(user: dict = Depends(get_current_user)):
     """Aggregate unique hierarchical locations across all stock positions."""

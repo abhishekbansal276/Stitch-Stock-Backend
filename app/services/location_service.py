@@ -55,6 +55,18 @@ class LocationService:
             'zones': firestore.ArrayUnion([zone_name])
         })
 
+    def rename_zone(self, warehouse_id: str, old_name: str, new_name: str):
+        """Atomically renames a zone within a warehouse."""
+        from google.cloud import firestore
+        doc_ref = self.collection.document(warehouse_id)
+        # Update both simultaneously: Remove old, Add new
+        doc_ref.update({
+            'zones': firestore.ArrayRemove([old_name])
+        })
+        doc_ref.update({
+            'zones': firestore.ArrayUnion([new_name])
+        })
+
     def get_location_by_id(self, loc_id: str) -> Dict:
         """Fetch details for a specific warehouse by ID."""
         doc = self.collection.document(loc_id).get()
