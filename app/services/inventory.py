@@ -209,6 +209,3 @@ class InventoryService:
         return self.execute_transfer(transaction, doc_ref, from_loc_id, to_loc_id, to_loc_name, qty)
 
 inventory_service = InventoryService()
-
-
-inventory_service = InventoryService()

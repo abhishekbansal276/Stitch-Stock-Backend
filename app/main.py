@@ -263,23 +263,11 @@ async def get_inventory_report(user: dict = Depends(get_current_user)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/warehouse/items")
-async def get_items_in_zone(loc_id: str, user: dict = Depends(get_current_user)):
-    """Drill-down: Returns all items sitting in a specific physical ID."""
-    try:
-        return inventory_service.get_items_in_zone(loc_id)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-    try:
-        return inventory_service.get_all_zones()
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.get("/warehouse/items")
-async def get_items_by_zone(zone: str, user: dict = Depends(get_current_user)):
+@app.get("/warehouse/items/{loc_id}")
+async def get_items_by_zone(loc_id: str, user: dict = Depends(get_current_user)):
     """Drill-down: Returns all products present in a specific zone."""
     try:
-        return inventory_service.get_items_in_zone(zone)
+        return inventory_service.get_items_in_zone(loc_id)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
