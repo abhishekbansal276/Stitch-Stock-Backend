@@ -152,6 +152,7 @@ class InventoryService:
                 'unit': data['unit'],
                 'updated_at': data.get('updated_at'),
                 'min_stock_level': data.get('min_stock_level', 0),
+                'barcode_link': data.get('barcode_link'),
                 'distributions': data.get('distributions', [])
             })
         return items
@@ -160,6 +161,13 @@ class InventoryService:
         """Admin override for threshold alerts."""
         self.collection.document(barcode_id).update({
             'min_stock_level': min_level,
+            'updated_at': int(time.time())
+        })
+
+    def update_barcode_link(self, barcode_id: str, link: str):
+        """Updates the stored link to the cloud-archived barcode image."""
+        self.collection.document(barcode_id).update({
+            'barcode_link': link,
             'updated_at': int(time.time())
         })
 

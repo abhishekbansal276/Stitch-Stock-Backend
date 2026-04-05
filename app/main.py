@@ -140,7 +140,10 @@ def _process_barcode_archiving(item_id: str, item_name: str):
     try:
         link = drive_service.generate_and_upload_barcode(item_id, item_name)
         if link:
+            # 1. Update Sheets Ledger
             sheets_service.update_barcode_link(item_id, link)
+            # 2. Update Firestore for Mobile visibility
+            inventory_service.update_barcode_link(item_id, link)
     except Exception as e:
         print(f"Background Barcode Error: {e}")
 
