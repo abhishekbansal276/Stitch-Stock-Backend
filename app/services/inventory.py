@@ -1,4 +1,5 @@
 import time
+import uuid
 from typing import List, Dict
 from app.services.firebase import db
 from google.cloud import firestore
@@ -11,11 +12,20 @@ class InventoryService:
     def save_position(self, barcode_id: str, product_name: str, product_code: str, unit: str, distributions: List[Dict]):
         """
         Stores the spatial distribution of a stock item in Firestore.
-        distributions: [{'loc_id': 'LOC-1', 'loc_name': 'Shed A', 'qty': 10}, ...]
+        distributions: [{'warehouse': 'DC1', 'location': 'Row 7', 'qty': 10, 'dist_id': 'UID'}, ...]
         """
+        # Ensure every distribution split has a unique traceable ID
+        for d in distributions:
+            if not d.get('dist_id') or d.get('dist_id') == 'AUTO':
+                d['dist_id'] = f"POS-{str(uuid.uuid4())[:8].upper()}"
+        
         total_qty = sum(float(d.get('qty', 0)) for d in distributions if d.get('qty'))
-        # Flat list of location IDs for fast Firestore indexing/querying
-        location_ids = list(set([d.get('loc_id') for d in distributions if float(d.get('qty', 0)) > 0]))
+        # Store flat list of warehouses and specific locations for search
+        search_locations = []
+        for d in distributions:
+            if float(d.get('qty', 0)) > 0:
+                search_locations.append(d.get('warehouse'))
+                search_locations.append(f"{d.get('warehouse')} - {d.get('location')}")
         
         doc_ref = self.collection.document(barcode_id)
         existing = doc_ref.get()
@@ -30,7 +40,7 @@ class InventoryService:
             'unit': unit,
             'total_qty': total_qty,
             'distributions': distributions,
-            'location_ids': location_ids,
+            'location_ids': list(set([l for l in search_locations if l])),
             'min_stock_level': min_stock,
             'updated_at': int(time.time())
         })

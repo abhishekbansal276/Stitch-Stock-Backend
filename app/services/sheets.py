@@ -21,7 +21,7 @@ class SheetsService:
         "Transporter Name", "Remarks", "Barcode Link"
     ]
     MOVEMENTS_SCHEMA = [
-        "Movement ID", "Barcode ID", "Transaction ID", "Type", "Quantity", "Location", "User", "Timestamp"
+        "Movement ID", "Barcode ID", "Transaction ID", "Type", "Quantity", "Warehouse", "Location", "User", "Timestamp", "Position ID"
     ]
     SUMMARY_SCHEMA = [
         "Product Code", "Product Name", "Total Received", "Total Dispatched", "Current Balance", "Unit"
@@ -205,16 +205,17 @@ class SheetsService:
             batch = item.get('Batch Number', 'N/A')
             trans_id = header.get('Invoice Number', 'TRANS-NEW')
             raw_qty = item.get('Quantity Received', '0')
-            numeric_qty = self._parse_numeric(raw_qty)
-            
-            # Distribution Logic (Default to 'Main Warehouse' if not provided)
-            # This will be used for both Sheets and Firestore
-            distributions = item.get('distributions', [{'location': 'Main Warehouse', 'qty': numeric_qty}])
+            numeric_qty = self._parse_numeric(raw_qty) or 0.0
+
+            # Distribution Logic
+            distributions = item.get('distributions', [{'warehouse': 'Main Warehouse', 'location': 'Full Receive', 'qty': numeric_qty, 'dist_id': 'AUTO'}])
             
             for dist in distributions:
-                loc_name = dist.get('location', 'Main Warehouse')
+                wh = dist.get('warehouse', 'Main Warehouse')
+                loc = dist.get('location', 'Full Receive')
                 l_qty = dist.get('qty', 0)
-                self.add_movement(item_id, f"{trans_id} (Batch: {batch})", 'IN', l_qty, user_email, location=loc_name)
+                d_id = dist.get('dist_id', 'AUTO')
+                self.add_movement(item_id, f"{trans_id} (Batch: {batch})", 'IN', l_qty, user_email, warehouse=wh, location=loc, dist_id=d_id)
                 self._update_summary(p_code, item.get('Product Name', 'N/A'), l_qty, item.get('Unit', 'PCS'), 'IN')
             
             new_ids.append(item_id)
@@ -332,11 +333,12 @@ class SheetsService:
             ).execute()
         except: pass
 
-    def add_movement(self, stock_item_id: str, trans_id: str, type: str, qty: float, user_email: str, location: str = "Main Warehouse"):
+    def add_movement(self, stock_item_id: str, trans_id: str, type: str, qty: float, user_email: str, 
+                     warehouse: str = "Main Warehouse", location: str = "Full Receive", dist_id: str = "N/A"):
         now_str = time.strftime('%Y-%m-%d %H:%M:%S')
         if self.service:
-            # Row mapping for Location-Aware Movements
-            row = [str(uuid.uuid4())[:8].upper(), stock_item_id, trans_id, type, qty, location, user_email, now_str]
+            # Row mapping for Location-Aware Movements (Standard Columns: A-J)
+            row = [str(uuid.uuid4())[:8].upper(), stock_item_id, trans_id, type, qty, warehouse, location, user_email, now_str, dist_id]
             self._append_row('Stock Movements', row)
             
             # Sync to Summary
