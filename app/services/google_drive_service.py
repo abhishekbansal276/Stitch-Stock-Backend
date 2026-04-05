@@ -44,7 +44,7 @@ class GoogleDriveService:
                 timeout=30
             )
 
-            if response.statusCode == 200:
+            if response.status_code == 200:
                 result = response.json()
                 if result.get("status") == "success":
                     return result.get("webViewLink", "")
