@@ -9,13 +9,41 @@ load_dotenv()
 
 
 def initialize_firebase():
-    """Initialize Firebase Admin SDK and return Firestore client."""
+    """
+    Initialize Firebase Admin SDK and return Firestore client.
+    Priority:
+      1. FIREBASE_SERVICE_ACCOUNT_JSON - Plain JSON string in env var (Best for Cloud)
+      2. FIREBASE_SERVICE_ACCOUNT_B64  - Base64 encoded JSON string
+      3. SERVICE_ACCOUNT_KEY - path to a local .json file (Local Fallback)
+    """
     if not firebase_admin._apps:
-        # File-based initialization (source of truth for this deployment)
+        # 1. Plain JSON string from Env
+        sa_json = os.getenv("FIREBASE_SERVICE_ACCOUNT_JSON")
+        if sa_json:
+            try:
+                cred_dict = json.loads(sa_json)
+                cred = credentials.Certificate(cred_dict)
+                firebase_admin.initialize_app(cred)
+                print("Firebase: Initialized from FIREBASE_SERVICE_ACCOUNT_JSON")
+                return firestore.client()
+            except Exception as e:
+                print(f"Firebase: Failed to parse FIREBASE_SERVICE_ACCOUNT_JSON: {e}")
+
+        # 2. Base64 Encoded JSON from Env
+        sa_b64 = os.getenv("FIREBASE_SERVICE_ACCOUNT_B64")
+        if sa_b64:
+            try:
+                decoded = base64.b64decode(sa_b64).decode("utf-8")
+                cred_dict = json.loads(decoded)
+                cred = credentials.Certificate(cred_dict)
+                firebase_admin.initialize_app(cred)
+                print("Firebase: Initialized from FIREBASE_SERVICE_ACCOUNT_B64")
+                return firestore.client()
+            except Exception as e:
+                print(f"Firebase: Failed to parse FIREBASE_SERVICE_ACCOUNT_B64: {e}")
+
+        # 3. File-based fallback
         service_account_path = os.getenv("SERVICE_ACCOUNT_KEY", "serviceAccountKey.json")
-        
-        # In Docker/Railway, the file is usually in /app/serviceAccountKey.json
-        # If running from app/, check one level up
         if not os.path.exists(service_account_path) and os.path.exists("../" + service_account_path):
             service_account_path = "../" + service_account_path
 
@@ -23,19 +51,19 @@ def initialize_firebase():
             try:
                 cred = credentials.Certificate(service_account_path)
                 firebase_admin.initialize_app(cred)
-                print(f"Firebase initialized successfully from file: {service_account_path}")
+                print(f"Firebase: Initialized from file: {service_account_path}")
                 return firestore.client()
             except Exception as e:
-                print(f"Error initializing Firebase from file: {e}")
-                raise e
+                print(f"Firebase: File initialization skipped ({service_account_path}): {e}")
         
-        # Fallback error if file is missing
-        error_msg = (
-            f"FIREBASE AUTH FAILED: '{service_account_path}' not found! "
-            "Please ensure the file is committed to GitHub and present in the app root."
-        )
-        print(f"FATAL ERROR: {error_msg}")
-        raise ValueError(error_msg)
+        # FINAL FALLBACK (e.g. for CI/CD or local without key)
+        try:
+            firebase_admin.initialize_app()
+            print("Firebase: Initialized with default Application Credentials")
+            return firestore.client()
+        except Exception as e:
+            print(f"CRITICAL ERROR: Firebase could not be initialized: {e}")
+            raise e
 
     return firestore.client()
 
