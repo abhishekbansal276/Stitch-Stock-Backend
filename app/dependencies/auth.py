@@ -33,6 +33,14 @@ def get_current_user(
         # CLIENT-SIDE ROLE TRUST (Performance Opt)
         if not x_user_role:
             print(f"Auth Error: Missing X-User-Role header for {email}.")
+        # Fetch user profile from Firestore
+        print(f"Auth: Fetching profile for {email} from Firestore...")
+        f_start = time.time()
+        user_doc = db.collection("users").document(email).get()
+        print(f"Auth: Profile fetched in {time.time() - f_start:.4f}s")
+        
+        if not user_doc.exists:
+            print(f"Auth Error: Profile for {email} not found in Firestore.")
             raise HTTPException(
                 status_code=401,
                 detail="Authentication Error: Missing user role. Please relogin."
@@ -47,6 +55,13 @@ def get_current_user(
             "full_name": email.split('@')[0].capitalize() # Fallback name
         }
         
+        if not user_data.get("is_active", True):
+            print(f"Auth Error: Account {email} is deactivated.")
+            raise HTTPException(
+                status_code=403,
+                detail="Your account has been deactivated. Contact admin.",
+            )
+            
         return user_data
 
     except HTTPException:
