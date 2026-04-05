@@ -106,71 +106,79 @@ async def create_stock(
             item_ids.append(item_id)
             item['id'] = item_id # Inject ID for background processing
         
-        # 2. FIRESTORE PERSISTENCE (Near Instant)
-        for i, item_id in enumerate(item_ids):
-            item_data = items[i]
-            distributions = item_data.get('distributions', [
-                {'loc_id': 'default', 'loc_name': 'Main Floor', 'qty': item_data.get('Quantity Received', 0)}
-            ])
-            inventory_service.save_position(
-                item_id, item_data.get('Product Name'), 
-                item_data.get('Product Code'), 
-                item_data.get('Unit', 'PCS'),
-                distributions
-            )
-        
         # 3. BACKGROUND TASKS (Heavy / Slow Operations)
         background_tasks.add_task(_process_async_ingestion, header, items, item_ids, user)
         
         return {
-            "message": "Stock items and location positions registered.", 
+            "message": "Stock registration initiated. Tracking IDs generated.", 
             "status": "success",
             "stock_item_ids": item_ids,
-            "items": items # Contains the generated dist_ids
+            "items": items # Contains the generated IDs
         }
     except Exception as e:
         import traceback
         traceback.print_exc()
-        raise HTTPException(status_code=400, detail=f"Ingestion failed: {str(e)}")
+        raise HTTPException(status_code=400, detail=f"Ingestion setup failed: {str(e)}")
 
 async def _process_async_ingestion(header: dict, items: list, item_ids: list, user: dict):
-    """Heavy lifted background task for ledger sync and audit logging."""
+    """Heavy lifted background task for Firestore sync, Ledger sync and audit logging."""
     try:
         user_display = user.get('full_name', user['email'])
         
-        # 1. Update Google Sheets Ledger (Previously 502 culprit)
-        # We pass fixed item_ids to ensure consistency with Firestore
-        sheets_service.save_stock_batch(header, items, item_ids, user_display)
-        
-        # 2. Activity Logs & Notifications
+        # 1. Update Firestore & Google Sheets
+        # We perform these as a "batch" but handle item-level failures
         for i, item_id in enumerate(item_ids):
-            item_data = items[i]
-            qty_val = 0.0
-            try: qty_val = float(item_data.get('Quantity Received', 0))
-            except: pass
-            
-            activity_service.log_and_notify(
-                user=user,
-                action_type="IN",
-                item_name=item_data.get('Product Name', 'New Stock'),
-                product_code=item_data.get('Product Code', 'N/A'),
-                qty_change=qty_val,
-                location="Main Floor",
-                description=item_data.get('Description', '')
-            )
-            
-            # 3. Barcode Archiving (Nested Background)
-            _process_barcode_archiving(item_id, item_data.get('Product Name', 'Stock Item'))
-            
-            # 2. ENHANCED: Generate QR codes for every physical location
-            for dist in item_data.get('distributions', []):
-                dist_id = dist.get('dist_id')
-                dist_label = f"{item_data.get('Product Name')} @ {dist.get('warehouse')}"
-                if dist_id:
-                    _process_barcode_archiving(dist_id, dist_label, is_position=True, parent_id=item_id)
-            
+            try:
+                item_data = items[i]
+                
+                # Firestore Save
+                distributions = item_data.get('distributions', [
+                    {'loc_id': 'default', 'loc_name': 'Main Floor', 'qty': item_data.get('Quantity Received', 0)}
+                ])
+                inventory_service.save_position(
+                    item_id, item_data.get('Product Name'), 
+                    item_data.get('Product Code'), 
+                    item_data.get('Unit', 'PCS'),
+                    distributions
+                )
+                
+                # Sheets Save (Individual item sync within batch logic)
+                # Note: save_stock_batch internally manages its own loop for now
+                # but we call it for the whole batch for efficiency.
+                if i == 0: # Call once for the batch
+                    sheets_service.save_stock_batch(header, items, item_ids, user_display)
+
+                # 2. IF SUCCESSFUL -> LOG & NOTIFY
+                qty_val = 0.0
+                try: qty_val = float(item_data.get('Quantity Received', 0))
+                except: pass
+                
+                activity_service.log_and_notify(
+                    user=user,
+                    action_type="IN",
+                    item_name=item_data.get('Product Name', 'New Stock'),
+                    product_code=item_data.get('Product Code', 'N/A'),
+                    qty_change=qty_val,
+                    location="Main Floor",
+                    description=item_data.get('Description', '')
+                )
+                
+                # 3. Barcode Archiving (Asset Gen)
+                _process_barcode_archiving(item_id, item_data.get('Product Name', 'Stock Item'))
+                
+                # 4. Distribution Labels
+                for dist in item_data.get('distributions', []):
+                    dist_id = dist.get('dist_id')
+                    dist_label = f"{item_data.get('Product Name')} @ {dist.get('warehouse')}"
+                    if dist_id:
+                        _process_barcode_archiving(dist_id, dist_label, is_position=True, parent_id=item_id)
+                        
+            except Exception as item_err:
+                print(f"FAILED TO PROCESS ITEM {item_id}: {item_err}")
+                continue
+
     except Exception as e:
-        print(f"ASYNC INGESTION FAILED: {e}")
+        print(f"CRITICAL ASYNC INGESTION FAILURE: {e}")
 
 def _process_barcode_archiving(code_id: str, label: str, is_position: bool = False, parent_id: str = None):
     """Internal helper to generate/upload QR and update storage in background."""

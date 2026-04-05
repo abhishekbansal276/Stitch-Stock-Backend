@@ -274,6 +274,19 @@ class SheetsService:
         self.header_map = self._get_or_create_headers()
         now = time.strftime("%Y-%m-%d %H:%M:%S")
 
+        # ── OPTIMIZATION: Fetch existing data once for lookups ──
+        # Fetch barcode IDs (col 20 / index 19) and Product Codes (col 2 / index 1)
+        try:
+            lookup_res = self.service.spreadsheets().values().get(
+                spreadsheetId=self.spreadsheet_id, range="Stock Register!A:T"
+            ).execute().get("values", [])
+            existing_barcode_ids = {str(row[19]).strip(): i+1 for i, row in enumerate(lookup_res) if len(row) > 19}
+            existing_product_codes = {str(row[1]).strip(): i+1 for i, row in enumerate(lookup_res) if len(row) > 1}
+        except Exception as e:
+            print(f"Sheets Lookup Error: {e}")
+            existing_barcode_ids = {}
+            existing_product_codes = {}
+
         for i, item in enumerate(items):
             item_id = item_ids[i]
             name   = item.get("Product Name") or header.get("Product Name") or "Unknown Item"
@@ -293,22 +306,20 @@ class SheetsService:
             row_data[22] = now
             row_data[23] = user_email
 
-            # Fill columns 5-18 (Supplier Name … Remarks) from header + item
             for col_name in self.BASE_SCHEMA[5:19]:
                 idx = self.header_map.get(col_name)
                 if idx is not None:
                     row_data[idx] = item.get(col_name) or header.get(col_name) or ""
 
-            # Upsert logic: match by Barcode ID (col 19) first, then Product Code (col 1)
-            existing = self._find_row_by_col(19, item_id)
-            if existing != -1:
-                self._merge_row(existing, item, user_email)
+            # Upsert logic using in-memory lookup
+            existing_idx = existing_barcode_ids.get(str(item_id).strip())
+            if not existing_idx:
+                existing_idx = existing_product_codes.get(str(code).strip())
+
+            if existing_idx:
+                self._merge_row(existing_idx, item, user_email)
             else:
-                by_code = self._find_row_by_col(1, code)
-                if by_code != -1:
-                    self._merge_row(by_code, item, user_email)
-                else:
-                    self._append_row("Stock Register", row_data)
+                self._append_row("Stock Register", row_data)
 
             # Movement + Summary
             trans_id = header.get("Invoice Number") or f"TRANS-{str(uuid.uuid4())[:4].upper()}"
