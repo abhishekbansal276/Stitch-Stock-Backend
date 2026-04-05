@@ -62,15 +62,26 @@ async def extract_stock(
     """
     Upload a PDF or Image and get extracted JSON data.
     """
+    start_time = time.time()
+    user_email = user.get('email', 'Unknown')
+    print(f"\n--- EXTRACTION START [User: {user_email}] ---")
+    
     try:
         content = await file.read()
+        print(f"File Received: {file.filename} ({len(content)} bytes)")
         
         # ELITE SYNC: Get existing headers to help Gemini map them correctly
+        h_start = time.time()
         existing_headers = sheets_service.get_current_headers()
+        print(f"Sheets headers fetched in {time.time() - h_start:.4f}s")
         
         extracted_data = ocr_service.extract_from_file(content, file.filename, existing_headers)
+        
+        total_msg = f"--- EXTRACTION SUCCESS in {time.time() - start_time:.2f}s ---"
+        print(total_msg + "\n")
         return extracted_data
     except Exception as e:
+        print(f"!!! EXTRACTION FAILED: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Extraction failed: {str(e)}")
 
 @app.post("/stock/create")
