@@ -8,6 +8,17 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
+def clean_private_key(pk: str) -> str:
+    """Helper to properly formatting the private key from env vars."""
+    if not pk:
+        return ""
+    # Handle literal \n if passed from shell
+    pk = pk.replace("\\n", "\n")
+    # Remove any extra quotes or whitespace
+    pk = pk.strip("'").strip('"').strip()
+    return pk
+
+
 def initialize_firebase():
     """
     Initialize Firebase Admin SDK and return Firestore client.
@@ -22,6 +33,10 @@ def initialize_firebase():
         if sa_json:
             try:
                 cred_dict = json.loads(sa_json)
+                if "private_key" in cred_dict:
+                    cred_dict["private_key"] = clean_private_key(cred_dict["private_key"])
+                    print(f"Firebase: Private key verified (len={len(cred_dict['private_key'])})")
+                
                 cred = credentials.Certificate(cred_dict)
                 firebase_admin.initialize_app(cred)
                 print("Firebase: Initialized from FIREBASE_SERVICE_ACCOUNT_JSON")
@@ -35,6 +50,10 @@ def initialize_firebase():
             try:
                 decoded = base64.b64decode(sa_b64).decode("utf-8")
                 cred_dict = json.loads(decoded)
+                if "private_key" in cred_dict:
+                    cred_dict["private_key"] = clean_private_key(cred_dict["private_key"])
+                    print(f"Firebase: B64 Private key verified (len={len(cred_dict['private_key'])})")
+
                 cred = credentials.Certificate(cred_dict)
                 firebase_admin.initialize_app(cred)
                 print("Firebase: Initialized from FIREBASE_SERVICE_ACCOUNT_B64")
