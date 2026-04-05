@@ -1,5 +1,6 @@
 import os
 import time
+from datetime import datetime, timedelta
 import uuid
 import base64
 import json
@@ -384,36 +385,106 @@ class SheetsService:
         except Exception as e:
             print(f"Update Qty Error: {e}")
 
-    def get_summary_stats(self) -> Dict:
+    def get_summary_stats(self, period: str = "all") -> Dict:
         """Aggregates totals from the Stock Summary sheet for the Dashboard."""
         if not self.service: return {"total_in": 0, "total_out": 0, "available_balance": 0, "low_stock_count": 0}
+        
         try:
+            # 1. Get Current Inventory Snapshot (Always from Summary Sheet)
             res = self.service.spreadsheets().values().get(
                 spreadsheetId=self.spreadsheet_id, range='Stock Summary!C:E'
             ).execute()
             rows = res.get('values', [])[1:] # Skip headers
             
-            total_in = 0.0
-            total_out = 0.0
+            all_time_in = 0.0
+            all_time_out = 0.0
             low_stock = 0
             
             for row in rows:
                 if len(row) >= 3:
-                    tin = float(row[0] or 0)
-                    tout = float(row[1] or 0)
-                    bal = float(row[2] or 0)
-                    total_in += tin
-                    total_out += tout
+                    tin = self._parse_numeric(row[0])
+                    tout = self._parse_numeric(row[1])
+                    bal = self._parse_numeric(row[2])
+                    all_time_in += tin
+                    all_time_out += tout
                     if bal < 10: low_stock += 1
+
+            if period == "today":
+                # 2. Get Today's Activity from Movements Sheet
+                today_str = datetime.now().strftime('%Y-%m-%d')
+                move_res = self.service.spreadsheets().values().get(
+                    spreadsheetId=self.spreadsheet_id, range='Stock Movements!D:H'
+                ).execute()
+                move_rows = move_res.get('values', [])[1:] # Skip headers
+                
+                today_in = 0.0
+                today_out = 0.0
+                
+                for m_row in move_rows:
+                    if len(m_row) >= 5:
+                        m_type = m_row[0] # Type
+                        m_qty = abs(self._parse_numeric(m_row[1])) # Quantity
+                        m_ts = m_row[4] # Timestamp (YYYY-MM-DD HH:MM:SS)
+                        
+                        if m_ts.startswith(today_str):
+                            if m_type == 'IN': today_in += m_qty
+                            elif m_type == 'OUT': today_out += m_qty
+                
+                return {
+                    "total_in": today_in,
+                    "total_out": today_out,
+                    "available_balance": all_time_in - all_time_out, # Balance is always current state
+                    "low_stock_count": low_stock
+                }
             
+            # Default: Return All-Time Stats
             return {
-                "total_in": total_in,
-                "total_out": total_out,
-                "available_balance": total_in - total_out,
+                "total_in": all_time_in,
+                "total_out": all_time_out,
+                "available_balance": all_time_in - all_time_out,
                 "low_stock_count": low_stock
             }
-        except:
+        except Exception as e:
+            print(f"Summary Fetch Error: {e}")
             return {"total_in": 0, "total_out": 0, "available_balance": 0, "low_stock_count": 0}
+
+    def get_graph_data(self) -> Dict:
+        """Generates 7-day time-series data and zone distribution for charts."""
+        if not self.service: return {"movement": [], "zones": []}
+        
+        try:
+            # 1. Stock Movement (Last 7 Days)
+            move_res = self.service.spreadsheets().values().get(
+                spreadsheetId=self.spreadsheet_id, range='Stock Movements!D:H'
+            ).execute()
+            move_rows = move_res.get('values', [])[1:]
+            
+            days = []
+            for i in range(6, -1, -1):
+                days.append((datetime.now() - timedelta(days=i)).strftime('%Y-%m-%d'))
+            
+            movement_data = {d: {"in": 0.0, "out": 0.0} for d in days}
+            
+            for row in move_rows:
+                if len(row) >= 5:
+                    m_type, m_qty, m_ts = row[0], abs(self._parse_numeric(row[1])), row[4]
+                    d_key = m_ts.split(' ')[0]
+                    if d_key in movement_data:
+                        if m_type == 'IN': movement_data[d_key]["in"] += m_qty
+                        elif m_type == 'OUT': movement_data[d_key]["out"] += m_qty
+            
+            # 2. Zone Distribution
+            # We get this from Firestore for real-time spatial accuracy
+            from app.services.inventory import inventory_service
+            zones_data = inventory_service.get_all_zones()
+            
+            return {
+                "movement": [{"date": d, "in": v["in"], "out": v["out"]} for d, v in movement_data.items()],
+                "zones": zones_data # List of {name: str, total_stock: float}
+            }
+        except Exception as e:
+            print(f"Graph Data Error: {e}")
+            return {"movement": [], "zones": []}
 
     def get_stock_item(self, item_id: str) -> Dict:
         if not self.service: return {}

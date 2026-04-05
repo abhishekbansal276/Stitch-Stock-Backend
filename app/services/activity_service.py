@@ -71,4 +71,18 @@ class ActivityService:
             print(f"Log Retrieval Error: {e}")
             return []
 
+    def log_user_management_action(self, admin_email: str, action: str, target_email: str, details: str = ""):
+        """Administrative Log for User Management."""
+        try:
+            log_entry = {
+                'admin_email': admin_email,
+                'action_type': action,
+                'target_user': target_email,
+                'details': details,
+                'created_at': int(time.time())
+            }
+            db.collection('user_management_logs').add(log_entry)
+        except Exception as e:
+            print(f"User Audit Logging Error: {e}")
+
 activity_service = ActivityService()

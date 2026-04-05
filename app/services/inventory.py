@@ -102,7 +102,7 @@ class InventoryService:
     # --- Warehouse Explorer & Transfer Methods ---
 
     def get_all_zones(self) -> List[Dict]:
-        """Aggregate unique locations across all stock positions."""
+        """Aggregate unique locations across all stock positions with total quantities."""
         docs = self.collection.stream()
         zones = {}
         for doc in docs:
@@ -110,10 +110,14 @@ class InventoryService:
             for dist in data.get('distributions', []):
                 loc_id = dist.get('loc_id')
                 loc_name = dist.get('loc_name', 'Unknown')
+                qty = float(dist.get('qty', 0))
+                
                 if loc_id and loc_id not in zones:
-                    zones[loc_id] = {"id": loc_id, "name": loc_name, "items_count": 0}
+                    zones[loc_id] = {"id": loc_id, "name": loc_name, "items_count": 0, "total_stock": 0.0}
+                
                 if loc_id:
                     zones[loc_id]["items_count"] += 1
+                    zones[loc_id]["total_stock"] += qty
         return list(zones.values())
 
     def get_inventory_summary(self) -> List[Dict]:

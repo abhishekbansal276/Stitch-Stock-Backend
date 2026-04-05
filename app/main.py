@@ -209,12 +209,13 @@ async def remove_stock(
         raise HTTPException(status_code=500, detail=f"Removal failed: {str(e)}")
 
 @app.get("/reports/summary")
-async def get_summary(user: dict = Depends(get_current_user)):
+async def get_summary(period: str = "all", user: dict = Depends(get_current_user)):
     """
     Get live summary data from the 'Stock Summary' sheet.
+    Supports 'period=today' for daily stats.
     """
     try:
-        return sheets_service.get_summary_stats()
+        return sheets_service.get_summary_stats(period=period)
     except Exception as e:
         print(f"Summary Fetch Error: {e}")
         return {
@@ -223,6 +224,17 @@ async def get_summary(user: dict = Depends(get_current_user)):
             "available_balance": 0,
             "low_stock_count": 0
         }
+
+@app.get("/reports/graphs")
+async def get_graph_data(user: dict = Depends(get_current_user)):
+    """
+    Get 7-day time-series and zone distribution for dashboard charts.
+    """
+    try:
+        return sheets_service.get_graph_data()
+    except Exception as e:
+        print(f"Graph Data Error: {e}")
+        return {"movement": [], "zones": []}
 
 @app.get("/logs")
 async def get_logs(limit: int = 20, last_ts: int = None, search: str = None, user: dict = Depends(get_current_user)):

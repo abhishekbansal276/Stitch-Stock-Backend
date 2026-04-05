@@ -3,6 +3,7 @@ from firebase_admin import auth, firestore
 from app.services.firebase import db
 from app.models.user import UserCreate, UserResponse
 from app.dependencies.auth import get_current_user, require_admin
+from app.services.activity_service import activity_service
 
 router = APIRouter(prefix="/users", tags=["users"])
 
@@ -32,6 +33,14 @@ def create_new_user(user_in: UserCreate, admin: dict = Depends(require_admin)):
         
         db.collection('users').document(user_in.email).set(user_data)
         
+        # 3. Log administrative action
+        activity_service.log_user_management_action(
+            admin_email=admin['email'],
+            action="CREATE_USER",
+            target_email=user_in.email,
+            details=f"Created user as {user_in.role}"
+        )
+        
         return UserResponse(
             email=user_in.email,
             full_name=user_in.full_name,
@@ -58,11 +67,24 @@ def list_users(admin: dict = Depends(require_admin)):
 def update_user_status(email: str, status: bool, admin: dict = Depends(require_admin)):
     """Admin-only: Deactivate or Activate a user."""
     try:
+        # Pre-emptive strike: Self-deactivation check
+        if admin['email'] == email and not status:
+            raise HTTPException(status_code=400, detail="CRITICAL: You cannot deactivate your own account.")
+
         user_ref = db.collection('users').document(email)
         if not user_ref.get().exists:
             raise HTTPException(status_code=404, detail="User not found")
         
         user_ref.update({"is_active": status})
+
+        # Log administrative action
+        activity_service.log_user_management_action(
+            admin_email=admin['email'],
+            action="TOGGLE_STATUS",
+            target_email=email,
+            details=f"Status set to {'ACTIVE' if status else 'INACTIVE'}"
+        )
+
         return {"message": f"User status updated to {'active' if status else 'inactive'}"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
