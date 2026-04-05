@@ -36,11 +36,28 @@ class SheetsService:
         self._cached_header_map = {}
 
     def _initialize_service(self):
+        raw_json = os.getenv("FIREBASE_SERVICE_ACCOUNT_JSON")
+        if raw_json:
+            try:
+                cred_dict = json.loads(raw_json, strict=False)
+                if "private_key" in cred_dict:
+                    cred_dict["private_key"] = cred_dict["private_key"].replace("\\n", "\n")
+                creds = service_account.Credentials.from_service_account_info(cred_dict, scopes=self.scopes)
+                return build('sheets', 'v4', credentials=creds)
+            except Exception as e:
+                print(f"Error loading Raw JSON Sheets key: {e}")
+
         b64_key = os.getenv("FIREBASE_SERVICE_ACCOUNT_B64")
         if b64_key:
             try:
+                b64_key = "".join(b64_key.split())
+                padding = len(b64_key) % 4
+                if padding > 0:
+                    b64_key += "=" * (4 - padding)
                 decoded_key = base64.b64decode(b64_key).decode('utf-8')
-                cred_dict = json.loads(decoded_key)
+                cred_dict = json.loads(decoded_key, strict=False)
+                if "private_key" in cred_dict:
+                    cred_dict["private_key"] = cred_dict["private_key"].replace("\\n", "\n")
                 creds = service_account.Credentials.from_service_account_info(cred_dict, scopes=self.scopes)
                 return build('sheets', 'v4', credentials=creds)
             except Exception as e:

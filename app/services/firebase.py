@@ -15,7 +15,9 @@ def initialize_firebase():
         raw_json = os.getenv("FIREBASE_SERVICE_ACCOUNT_JSON")
         if raw_json:
             try:
-                cred_dict = json.loads(raw_json)
+                cred_dict = json.loads(raw_json, strict=False)
+                if "private_key" in cred_dict:
+                    cred_dict["private_key"] = cred_dict["private_key"].replace("\\n", "\n")
                 cred = credentials.Certificate(cred_dict)
                 firebase_admin.initialize_app(cred)
                 print("Firebase initialized successfully from Raw JSON env var.")
@@ -36,7 +38,7 @@ def initialize_firebase():
                     b64_key += "=" * (4 - padding)
                     
                 decoded_key = base64.b64decode(b64_key).decode("utf-8")
-                cred_dict = json.loads(decoded_key)
+                cred_dict = json.loads(decoded_key, strict=False)
                 cred = credentials.Certificate(cred_dict)
                 firebase_admin.initialize_app(cred)
                 print("Firebase initialized successfully from Base64 env var.")
