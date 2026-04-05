@@ -257,13 +257,14 @@ async def get_all_locations(user: dict = Depends(get_current_user)):
 
 @app.post("/warehouse/locations")
 async def create_location(payload: dict, user: dict = Depends(get_current_user)):
-    """Add a new physical zone."""
+    """Add a new physical zone with warehouse hierarchy."""
     try:
-        name = payload.get('name')
-        if not name:
-            raise HTTPException(status_code=400, detail="Name required")
-        loc_id = location_service.create_location(name)
-        return {"id": loc_id, "name": name}
+        zone = payload.get('name')
+        warehouse = payload.get('warehouse', 'Main Warehouse')
+        if not zone:
+            raise HTTPException(status_code=400, detail="Zone name required")
+        loc_id = location_service.create_location(zone, warehouse)
+        return {"id": loc_id, "name": zone, "warehouse": warehouse}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
