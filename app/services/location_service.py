@@ -30,7 +30,7 @@ class LocationService:
             
         return locations
 
-    def create_location(self, name: str, zones: List[String] = None) -> str:
+    def create_location(self, name: str, zones: List[str] = None) -> str:
         """Add a new warehouse master with optional initial zones."""
         if zones is None:
             zones = ["Main Floor"]
