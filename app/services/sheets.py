@@ -8,7 +8,7 @@ from typing import List, Dict
 
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
-from app.services.firebase import db
+from app.services.firebase import db, clean_private_key
 
 
 class SheetsService:
@@ -53,14 +53,32 @@ class SheetsService:
         if sa_json:
             try:
                 cred_dict = json.loads(sa_json)
+                if "private_key" in cred_dict:
+                    cred_dict["private_key"] = clean_private_key(cred_dict["private_key"])
+                
                 creds = service_account.Credentials.from_service_account_info(
                     cred_dict, scopes=self.SCOPES)
                 print("SheetsService: credentials loaded from FIREBASE_SERVICE_ACCOUNT_JSON")
                 return build("sheets", "v4", credentials=creds)
-            except json.JSONDecodeError as e:
-                print(f"SheetsService: FIREBASE_SERVICE_ACCOUNT_JSON is not valid JSON — {e}")
             except Exception as e:
-                print(f"SheetsService: failed to build service from JSON env var — {e}")
+                print(f"SheetsService: failed to build from JSON env var — {e}")
+
+        # 2. Base64 encoded JSON
+        sa_b64 = os.getenv("FIREBASE_SERVICE_ACCOUNT_B64")
+        if sa_b64:
+            try:
+                import base64
+                decoded = base64.b64decode(sa_b64).decode("utf-8")
+                cred_dict = json.loads(decoded)
+                if "private_key" in cred_dict:
+                    cred_dict["private_key"] = clean_private_key(cred_dict["private_key"])
+                
+                creds = service_account.Credentials.from_service_account_info(
+                    cred_dict, scopes=self.SCOPES)
+                print("SheetsService: credentials loaded from FIREBASE_SERVICE_ACCOUNT_B64")
+                return build("sheets", "v4", credentials=creds)
+            except Exception as e:
+                print(f"SheetsService: failed to build from B64 env var — {e}")
 
         # 2. File fallback
         sa_file = os.getenv("SERVICE_ACCOUNT_FILE", "serviceAccountKey.json")
