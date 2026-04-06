@@ -256,23 +256,26 @@ class SheetsService:
 
         # ── Resolve sheet-specific design tokens ──────────────────────────────
         if title == "Stock Register":
-            hdr_color  = _rgb("register_header")
-            tab_color  = {"red": 0.180, "green": 0.380, "blue": 0.620}
-            col_widths = self.REGISTER_COL_WIDTHS
-            freeze_cols = 2
-            frozen_rows = 2
+            hdr_color    = _rgb("register_header")
+            subhdr_color = _rgb("register_subhdr")
+            tab_color    = {"red": 0.180, "green": 0.380, "blue": 0.620}
+            col_widths   = self.REGISTER_COL_WIDTHS
+            freeze_cols  = 2
+            frozen_rows  = 2
         elif title == "Stock Movements":
-            hdr_color  = _rgb("movements_header")
-            tab_color  = {"red": 0.067, "green": 0.490, "blue": 0.440}
-            col_widths = self.MOVEMENTS_COL_WIDTHS
-            freeze_cols = 2
-            frozen_rows = 2
+            hdr_color    = _rgb("movements_header")
+            subhdr_color = _rgb("movements_subhdr")
+            tab_color    = {"red": 0.067, "green": 0.490, "blue": 0.440}
+            col_widths   = self.MOVEMENTS_COL_WIDTHS
+            freeze_cols  = 2
+            frozen_rows  = 2
         else:  # Stock Summary
-            hdr_color  = _rgb("summary_header")
-            tab_color  = {"red": 0.380, "green": 0.200, "blue": 0.600}
-            col_widths = self.SUMMARY_COL_WIDTHS
-            freeze_cols = 2
-            frozen_rows = 2
+            hdr_color    = _rgb("summary_header")
+            subhdr_color = _rgb("summary_subhdr")
+            tab_color    = {"red": 0.380, "green": 0.200, "blue": 0.600}
+            col_widths   = self.SUMMARY_COL_WIDTHS
+            freeze_cols  = 2
+            frozen_rows  = 2
 
         num_cols = len(schema)
 
@@ -315,12 +318,12 @@ class SheetsService:
                     }
                 })
 
-        # ── 2. HEADER ROW STYLE ───────────────────────────────────────────────
+        # ── 2. PRIMARY SUPER-HEADER STYLE (Row 1) ─────────────────────────────
         requests.append({
             "repeatCell": {
                 "range": {
                     "sheetId": sheet_id,
-                    "startRowIndex": 0, "endRowIndex": frozen_rows,
+                    "startRowIndex": 0, "endRowIndex": 1,
                     "startColumnIndex": 0, "endColumnIndex": num_cols,
                 },
                 "cell": {
@@ -335,11 +338,36 @@ class SheetsService:
                         "horizontalAlignment": "CENTER",
                         "verticalAlignment": "MIDDLE",
                         "wrapStrategy": "CLIP",
+                    }
+                },
+                "fields": "userEnteredFormat(backgroundColor,textFormat,horizontalAlignment,verticalAlignment,wrapStrategy)",
+            }
+        })
+
+        # ── 2.5 SUB-HEADER STYLE (Row 2) ──────────────────────────────────────
+        requests.append({
+            "repeatCell": {
+                "range": {
+                    "sheetId": sheet_id,
+                    "startRowIndex": 1, "endRowIndex": 2,
+                    "startColumnIndex": 0, "endColumnIndex": num_cols,
+                },
+                "cell": {
+                    "userEnteredFormat": {
+                        "backgroundColor": subhdr_color,
+                        "textFormat": {
+                            "foregroundColor": _rgb("white"),
+                            "bold": True,
+                            "fontSize": 9,
+                            "fontFamily": "Google Sans",
+                        },
+                        "horizontalAlignment": "CENTER",
+                        "verticalAlignment": "MIDDLE",
+                        "wrapStrategy": "CLIP",
                         "padding": {"top": 6, "bottom": 6, "left": 8, "right": 8},
                     }
                 },
-                "fields": "userEnteredFormat(backgroundColor,textFormat,horizontalAlignment,"
-                          "verticalAlignment,wrapStrategy,padding)",
+                "fields": "userEnteredFormat(backgroundColor,textFormat,horizontalAlignment,verticalAlignment,wrapStrategy,padding)",
             }
         })
 
