@@ -43,14 +43,20 @@ class SheetsService:
     # ── SERVICE INIT ──────────────────────────────────────────────────────────
 
     def _initialize_service(self):
-        """
-        Build the Sheets API client.
+        """Build the Sheets API client with robust file-first priority."""
+        # 1. File-based priority (Repository uploaded)
+        sa_file = os.getenv("SERVICE_ACCOUNT_FILE", "serviceAccountKey.json")
+        abs_sa_path = BASE_DIR / sa_file
+        if abs_sa_path.exists():
+            try:
+                creds = service_account.Credentials.from_service_account_file(
+                    str(abs_sa_path), scopes=self.SCOPES)
+                print(f"SheetsService: Initialized from absolute repository file: {abs_sa_path}")
+                return build("sheets", "v4", credentials=creds)
+            except Exception as e:
+                print(f"SheetsService: Repository file check failed ({abs_sa_path}): {e}")
 
-        Priority:
-          1. FIREBASE_SERVICE_ACCOUNT_JSON  — plain JSON string in env var  (PRIMARY)
-          2. SERVICE_ACCOUNT_FILE           — path to a local .json file    (FALLBACK)
-        """
-        # 1. Plain JSON env var (no Base64 encoding needed)
+        # 2. Plain JSON env var
         sa_json = os.getenv("FIREBASE_SERVICE_ACCOUNT_JSON")
         if sa_json:
             try:
@@ -60,12 +66,12 @@ class SheetsService:
                 
                 creds = service_account.Credentials.from_service_account_info(
                     cred_dict, scopes=self.SCOPES)
-                print("SheetsService: credentials loaded from FIREBASE_SERVICE_ACCOUNT_JSON")
+                print("SheetsService: Initialized from FIREBASE_SERVICE_ACCOUNT_JSON")
                 return build("sheets", "v4", credentials=creds)
             except Exception as e:
                 print(f"SheetsService: failed to build from JSON env var — {e}")
 
-        # 2. Base64 encoded JSON
+        # 3. Base64 encoded JSON
         sa_b64 = os.getenv("FIREBASE_SERVICE_ACCOUNT_B64")
         if sa_b64:
             try:

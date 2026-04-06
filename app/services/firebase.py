@@ -35,22 +35,27 @@ def clean_private_key(pk: str) -> str:
 
 
 def initialize_firebase():
-    """
-    Initialize Firebase Admin SDK and return Firestore client.
-    Priority:
-      1. FIREBASE_SERVICE_ACCOUNT_JSON - Plain JSON string in env var (Best for Cloud)
-      2. FIREBASE_SERVICE_ACCOUNT_B64  - Base64 encoded JSON string
-      3. SERVICE_ACCOUNT_KEY - path to a local .json file (Local Fallback)
-    """
+    """Build the Firestore client using private key credentials."""
     if not firebase_admin._apps:
-        # 1. Plain JSON string from Env
+        # 1. File-based priority (Repository uploaded)
+        sa_file = os.getenv("SERVICE_ACCOUNT_KEY", "serviceAccountKey.json")
+        abs_sa_path = BASE_DIR / sa_file
+        if abs_sa_path.exists():
+            try:
+                cred = credentials.Certificate(str(abs_sa_path))
+                firebase_admin.initialize_app(cred)
+                print(f"Firebase: Initialized from absolute repository file: {abs_sa_path}")
+                return firestore.client()
+            except Exception as e:
+                print(f"Firebase: Repository file check failed ({abs_sa_path}): {e}")
+
+        # 2. Plain JSON env var
         sa_json = os.getenv("FIREBASE_SERVICE_ACCOUNT_JSON")
         if sa_json:
             try:
                 cred_dict = json.loads(sa_json)
                 if "private_key" in cred_dict:
                     cred_dict["private_key"] = clean_private_key(cred_dict["private_key"])
-                    print(f"Firebase: Private key verified (len={len(cred_dict['private_key'])})")
                 
                 cred = credentials.Certificate(cred_dict)
                 firebase_admin.initialize_app(cred)
@@ -59,7 +64,7 @@ def initialize_firebase():
             except Exception as e:
                 print(f"Firebase: Failed to parse FIREBASE_SERVICE_ACCOUNT_JSON: {e}")
 
-        # 2. Base64 Encoded JSON from Env
+        # 3. Base64 fallback (Legacy)
         sa_b64 = os.getenv("FIREBASE_SERVICE_ACCOUNT_B64")
         if sa_b64:
             try:

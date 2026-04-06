@@ -38,30 +38,25 @@ app.add_middleware(
 
 async def _automated_sync_reaper():
     """Background loop to identify and retry failed/pending syncs."""
-    await asyncio.sleep(20) # Give the server time to fully boot
-    print("🔄 SYNC REAPER: Starting periodic integrity check...")
+    await asyncio.sleep(60) # Wait 1 minute after boot for stability
     
     while True:
         try:
-            # Query Firestore for docs needing sync
-            # Collection: 'inventory_positions'
+            # Query Firestore (Limit to 50 items per pass to save resources)
             docs = db.collection("inventory_positions")\
                      .where(filter=FieldFilter("sync_status", "in", ["pending", "error"]))\
-                     .limit(100).get()
+                     .limit(50).get()
             
             if docs:
-                print(f"📊 SYNC REAPER: Found {len(docs)} items requiring sync. Processing...")
+                print(f"📊 SYNC REAPER: Identifying {len(docs)} items requiring attention...")
                 for doc in docs:
-                    data = doc.to_dict()
-                    doc_id = doc.id
-                    # Re-trigger ingestion for this specific record
-                    await _process_single_sync(doc_id, data)
+                    await _process_single_sync(doc.id, doc.to_dict())
             
         except Exception as e:
             print(f"❌ SYNC REAPER ERROR: {e}")
             
-        # Run every 5 minutes
-        await asyncio.sleep(300)
+        # Run every 15 minutes (900 seconds)
+        await asyncio.sleep(900)
 
 async def _process_single_sync(doc_id: str, data: Dict):
     """Internal helper to sync a single Firestore doc to Drive and Sheets."""
