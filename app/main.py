@@ -205,7 +205,8 @@ def _process_barcode_archiving(code_id: str, label: str, is_position: bool = Fal
     """Internal helper to generate/upload QR and update storage in background."""
     try:
         # Switch to the new Elite QR Generator
-        link = drive_service.generate_qr_code(code_id, label)
+        # Archive as standard 1D Barcode (Code 128)
+        link = drive_service.generate_barcode(code_id, label)
         if link:
             if not is_position:
                 # Main Item ID
