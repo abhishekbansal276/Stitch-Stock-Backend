@@ -228,7 +228,9 @@ async def _process_async_ingestion(header: dict, items: list, item_ids: list, us
                         item_data.get('Unit', 'PCS'),
                         distributions,
                         supplier_name=header.get('Supplier Name'),
-                        batch_number=item_data.get('Batch Number')
+                        batch_number=item_data.get('Batch Number'),
+                        storage_type=item_data.get('storage_type', 'UNIT'),
+                        number_of_bags=item_data.get('Number of Bags', 0)
                     )
                 
                 # MARK AS SYNCED ✅
@@ -327,6 +329,7 @@ async def remove_stock(
     """
     try:
         qty_to_remove = float(payload.get('quantity', 0))
+        bags_removed = float(payload.get('bags_removed', 0))
         loc_id = payload.get('loc_id', 'default')
         loc_name = payload.get('location', 'Main Floor')
         usage = payload.get('usage', 'General')
@@ -337,7 +340,7 @@ async def remove_stock(
             raise HTTPException(status_code=404, detail="Stock item not found")
             
         # 1. Atomic Firestore Deduction + Excel Sync (Handled inside service)
-        new_remaining = inventory_service.remove_stock_spatial(stock_item_id, loc_id, qty_to_remove, user=user)
+        new_remaining = inventory_service.remove_stock_spatial(stock_item_id, loc_id, qty_to_remove, user=user, bags_removed=bags_removed)
         
         # 2. Log Activity & Notify Admins
         activity_service.log_and_notify(

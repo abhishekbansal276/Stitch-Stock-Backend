@@ -13,7 +13,8 @@ class InventoryService:
 
     def save_position(self, barcode_id: str, product_name: str, product_code: str, 
                       unit: str, distributions: List[Dict], 
-                      supplier_name: str = None, batch_number: str = None):
+                      supplier_name: str = None, batch_number: str = None,
+                      storage_type: str = "UNIT", number_of_bags: int = 0):
         """
         Stores the spatial distribution of a stock item in Firestore.
         distributions: [{'warehouse': 'DC1', 'location': 'Row 7', 'qty': 10, 'dist_id': 'UID'}, ...]
@@ -50,6 +51,8 @@ class InventoryService:
             'min_stock_level': min_stock,
             'supplier_name': supplier_name,
             'batch_number': batch_number,
+            'storage_type': storage_type,
+            'number_of_bags': number_of_bags,
             'updated_at': int(time.time())
         }
         doc_ref.set(doc_data)
@@ -175,7 +178,7 @@ class InventoryService:
         # lookups will fail gracefully if distributions change.
         return new_total
 
-    def remove_stock_spatial(self, barcode_id: str, loc_id: str, qty: float, user: dict = None):
+    def remove_stock_spatial(self, barcode_id: str, loc_id: str, qty: float, user: dict = None, bags_removed: float = 0):
         """Wrapper to perform a safe atomic deduction."""
         doc_ref = self.collection.document(barcode_id)
         transaction = db.transaction()
@@ -192,6 +195,7 @@ class InventoryService:
             sheets_service.record_dispatch(
                 barcode_id=barcode_id,
                 qty=qty,
+                bags_removed=bags_removed,
                 warehouse=dist.get('warehouse', 'N/A'),
                 location=dist.get('location', 'N/A'),
                 user_display=user_display

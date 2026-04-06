@@ -56,7 +56,7 @@ class SheetsService:
         # 2. Product Details
         "Product Name", "Product Code", "Batch Number",
         # 3. Quantity / Packaging
-        "Quantity Received", "Unit", "Number of Bags",
+        "Quantity Received", "Unit", "Number of Bags", "Storage Type",
         # 4. Item Financials
         "Rate per Unit", "Item Amount",
         # 5. Bill Totals
@@ -87,21 +87,22 @@ class SheetsService:
         7: 130,   # Quantity Received
         8: 80,    # Unit
         9: 110,   # Number of Bags
-        10: 130,  # Rate per Unit
-        11: 140,  # Item Amount
-        12: 140,  # Taxable Amount
-        13: 190,  # Taxes
-        14: 160,  # Transport / Freight
-        15: 150,  # Grand Total
-        16: 140,  # Vehicle Number
-        17: 160,  # Transporter Name
-        18: 180,  # Barcode Link
-        19: 170,  # Barcode ID
-        20: 200,  # Remarks
-        21: 160,  # Created At
-        22: 170,  # Created By
-        23: 160,  # Updated At
-        24: 170,  # Updated By
+        10: 120,  # Storage Type
+        11: 130,  # Rate per Unit
+        12: 140,  # Item Amount
+        13: 140,  # Taxable Amount
+        14: 190,  # Taxes
+        15: 160,  # Transport / Freight
+        16: 150,  # Grand Total
+        17: 140,  # Vehicle Number
+        18: 160,  # Transporter Name
+        19: 180,  # Barcode Link
+        20: 170,  # Barcode ID
+        21: 200,  # Remarks
+        22: 150,  # Created At
+        23: 130,  # Created By
+        24: 150,  # Updated At
+        25: 130,  # Updated By
     }
     MOVEMENTS_COL_WIDTHS = {
         0: 160, 1: 200, 2: 90, 3: 100, 4: 160, 5: 160,
@@ -205,7 +206,7 @@ class SheetsService:
                 super_row = [
                     "BILL INFO (A)", "", "BILL INFO (B)", "",
                     "PRODUCT DETAILS", "", "",
-                    "QUANTITY / PACKAGING", "", "",
+                    "QUANTITY / PACKAGING", "", "", "",
                     "ITEM FINANCIALS", "",
                     "BILL TOTALS", "", "", "",
                     "TRANSPORT", "",
@@ -297,7 +298,8 @@ class SheetsService:
         # ── 1.5 MERGE SUPER HEADERS ───────────────────────────────────────────
         if title in ["Stock Register", "Stock Movements", "Stock Summary"]:
             if title == "Stock Register":
-                super_spans = [(0, 2), (2, 4), (4, 7), (7, 10), (10, 12), (12, 16), (16, 18), (18, 25)]
+                # Adjusted for new Storage Type column at index 10
+                super_spans = [(0, 2), (2, 4), (4, 7), (7, 11), (11, 13), (13, 17), (17, 19), (19, 26)]
             elif title == "Stock Movements":
                 super_spans = [(0, 2), (2, 7), (7, 12)]
             elif title == "Stock Summary":
@@ -901,15 +903,18 @@ class SheetsService:
             # Cache summary data in memory for accumulation
             summary_data_map = {}
             for i, r in enumerate(sum_rows):
-                if len(r) >= 6:
-                    summary_data_map[str(r[1]).strip()] = {
-                        "row": i + 1,
-                        "name": r[0],
-                        "balance": self._to_float(r[2]),
-                        "unit": r[3],
-                        "received": self._to_float(r[4]),
-                        "dispatched": self._to_float(r[5])
-                    }
+                if i == 0: continue # SKIP HEADER
+                if len(r) >= 2:
+                    code_key = str(r[1]).strip().upper()
+                    if code_key and code_key != "PRODUCT CODE":
+                        summary_data_map[code_key] = {
+                            "row": i + 1,
+                            "name": r[0],
+                            "balance": self._to_float(r[2]),
+                            "unit": r[3],
+                            "received": self._to_float(r[4]),
+                            "dispatched": self._to_float(r[5])
+                        }
         except Exception as e:
             print(f"Sheets Bulk Lookup Error: {e}")
             existing_reg_barcode = {}; existing_reg_code = {}; summary_idx = {}; summary_data_map = {}
@@ -960,6 +965,8 @@ class SheetsService:
                 row_data[h["Product Code"]] = code
                 row_data[h["Quantity Received"]] = str(qty)
                 row_data[h["Unit"]] = unit
+                row_data[h["Number of Bags"]] = str(item.get("Number of Bags") or 0)
+                row_data[h["Storage Type"]] = item.get("storage_type") or "UNIT"
                 
                 # Metadata
                 row_data[h["Barcode ID"]] = item_id
@@ -995,18 +1002,19 @@ class SheetsService:
                     movements_append.append([now, name, "IN", d_qty, "Main Warehouse", d_loc, user_email, f"MOV-{uuid.uuid4().hex[:6].upper()}", item_id, trans_id, "N/A", "N/A"])
 
             # ── C. Summary Update ──
-            s_entry = summary_data_map.get(code)
+            code_key = code.upper()
+            s_entry = summary_data_map.get(code_key)
             if s_entry:
                 s_entry["balance"] += qty
                 s_entry["received"] += qty
                 updates_batch.append({
-                    "range": f"Stock Summary!C{s_entry['row']}:G{s_entry['row']}",
-                    "values": [[s_entry["balance"], s_entry["unit"], s_entry["received"], s_entry["dispatched"], now]]
+                    "range": f"Stock Summary!A{s_entry['row']}:G{s_entry['row']}",
+                    "values": [[s_entry["name"], code, s_entry["balance"], s_entry["unit"], s_entry["received"], s_entry["dispatched"], now]]
                 })
             else:
                 summary_appends.append([name, code, qty, unit, qty, 0, now])
                 # Add to map so if same code appears twice in batch, we update it rather than append again
-                summary_data_map[code] = {"row": len(sum_rows) + len(summary_appends), "name": name, "balance": qty, "unit": unit, "received": qty, "dispatched": 0}
+                summary_data_map[code_key] = {"row": len(sum_rows) + len(summary_appends), "name": name, "balance": qty, "unit": unit, "received": qty, "dispatched": 0}
 
         # ── 3. EXECUTE SHIPMENT ───────────────────────────────────────────────
         try:
@@ -1070,8 +1078,8 @@ class SheetsService:
             return
         try:
             h = {n: i for i, n in enumerate(self.BASE_SCHEMA)}
-            b_id_idx = h.get("Barcode ID", 19)
-            link_idx = h.get("Barcode Link", 4)
+            b_id_idx = h.get("Barcode ID", 20)
+            link_idx = h.get("Barcode Link", 19)
             row_idx = self._find_row_by_col(b_id_idx, barcode_id)
             if row_idx != -1:
                 col_let = self._get_col_letter(link_idx)
@@ -1090,8 +1098,8 @@ class SheetsService:
             return
         try:
             h = {n: i for i, n in enumerate(self.BASE_SCHEMA)}
-            b_id_idx = h.get("Barcode ID", 19)
-            qty_idx  = h.get("Quantity Received", 2)
+            b_id_idx = h.get("Barcode ID", 20)
+            qty_idx  = h.get("Quantity Received", 7)
             row_idx = self._find_row_by_col(b_id_idx, barcode_id)
             if row_idx != -1:
                 col_let = self._get_col_letter(qty_idx)
@@ -1189,14 +1197,15 @@ class SheetsService:
     def get_current_headers(self) -> List[str]:
         return self.BASE_SCHEMA
 
-    def record_dispatch(self, barcode_id: str, qty: float, warehouse: str = "", location: str = "", user_display: str = "System"):
+    def record_dispatch(self, barcode_id: str, qty: float, bags_removed: float = 0, warehouse: str = "", location: str = "", user_display: str = "System"):
         """
         Deducts stock from the spreadsheet ledger and records the movement.
         """
         if not self.service: return
         try:
             h = {n: i for i, n in enumerate(self.BASE_SCHEMA)}
-            row_idx = self._find_row_by_col(h.get("Barcode ID", 19), barcode_id)
+            b_id_idx = h.get("Barcode ID", 20)
+            row_idx = self._find_row_by_col(b_id_idx, barcode_id)
             
             if row_idx == -1:
                 print(f"⚠️ Sheets Deduction: Barcode ID {barcode_id} not found in Register.")
@@ -1204,22 +1213,31 @@ class SheetsService:
 
             # 1. Update Stock Register Row
             qty_col = self._get_col_letter(h.get("Quantity Received", 7))
-            updated_at_col = self._get_col_letter(h.get("Updated At", 23))
-            updated_by_col = self._get_col_letter(h.get("Updated By", 24))
+            bags_col = self._get_col_letter(h.get("Number of Bags", 9))
+            updated_at_col = self._get_col_letter(h.get("Updated At", 24))
+            updated_by_col = self._get_col_letter(h.get("Updated By", 25))
 
-            # Fetch current qty
+            # Fetch current qty and bags
+            range_to_fetch = f"Stock Register!{qty_col}{row_idx}:{bags_col}{row_idx}"
             res = self.service.spreadsheets().values().get(
                 spreadsheetId=self.spreadsheet_id,
-                range=f"Stock Register!{qty_col}{row_idx}"
+                range=range_to_fetch
             ).execute()
-            curr_qty = self._to_float(res.get("values", [[0]])[0][0])
+            
+            row_vals = res.get("values", [[0, 0, 0]])[0]
+            curr_qty = self._to_float(row_vals[0])
+            # Index 2 in fetched row_vals corresponds to Bags column if range is Qty(7) to Bags(9)
+            curr_bags = self._to_float(row_vals[2]) if len(row_vals) > 2 else 0
+            
             new_qty = max(0.0, curr_qty - qty)
+            new_bags = max(0.0, curr_bags - bags_removed)
 
             # Batch update the row
             self.service.spreadsheets().values().batchUpdate(
                 spreadsheetId=self.spreadsheet_id,
                 body={"valueInputOption": "USER_ENTERED", "data": [
                     {"range": f"Stock Register!{qty_col}{row_idx}", "values": [[new_qty]]},
+                    {"range": f"Stock Register!{bags_col}{row_idx}", "values": [[new_bags]]},
                     {"range": f"Stock Register!{updated_at_col}{row_idx}:{updated_by_col}{row_idx}", "values": [[self._get_now_ist(), user_display]]}
                 ]}
             ).execute()
@@ -1267,8 +1285,9 @@ class SheetsService:
             data = rows[1:]
             
             found_idx = -1
+            code_to_find = str(code).strip().upper()
             for i, row in enumerate(data):
-                if len(row) >= 2 and str(row[1]).strip() == str(code).strip():
+                if len(row) >= 2 and str(row[1]).strip().upper() == code_to_find:
                     found_idx = i + 2 # +2 because 1-based and skip header
                     break
             
