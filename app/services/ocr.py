@@ -414,8 +414,38 @@ tax invoices, delivery challans, GRN documents, purchase orders, and e-way bills
 Extract data with 100% accuracy. Think step by step before finalizing each value.
 
 ═══════════════════════════════════════════════════════════════════
-COMMAND — Return the data in the standardized JSON schema provided.
+COMMAND — Return the data in the following standardized JSON format.
 ═══════════════════════════════════════════════════════════════════
+{
+  "header": {
+    "Date": "YYYY-MM-DD",
+    "Invoice Number": "...",
+    "Supplier Name": "...",
+    "Supplier GST": "...",
+    "Vehicle Number": "...",
+    "Transporter Name": "...",
+    "Taxable Amount": 0.0,
+    "Taxes": [
+      { "label": "CGST", "amount": 0.0 },
+      { "label": "SGST", "amount": 0.0 },
+      { "label": "IGST", "amount": 0.0 }
+    ],
+    "Transport / Freight": 0.0,
+    "Grand Total": 0.0
+  },
+  "items": [
+    {
+      "Product Code": "...",
+      "Product Name": "...",
+      "Batch Number": "...",
+      "Quantity Received": 0.0,
+      "Unit": "...",
+      "Number of Bags": 0,
+      "Rate per Unit": 0.0,
+      "Total Amount": 0.0
+    }
+  ]
+}
 
 ═══════════════════════════════════════════════════════════════════════
 FIELD MAPPING — Accept ANY of these aliases (case-insensitive, fuzzy-match)
