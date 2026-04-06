@@ -4,10 +4,16 @@ import re
 import time
 import logging
 import base64
+import io
 from typing import Dict, List, Optional
 from google import genai
 from google.genai import types
 from groq import Groq
+from PIL import Image
+
+# ── OPTIMIZATION CONFIGURATION ──────────────────────────────────────────────
+MAX_IMAGE_DIMENSION = 1600
+JPEG_QUALITY = 80
 
 # ── LOGGING CONFIGURATION ───────────────────────────────────────────────────
 logging.basicConfig(level=logging.INFO)
@@ -97,6 +103,12 @@ class OCRService:
             
         mime_type = mime_map[ext]
         logger.info(f"OCRService: Processing '{filename}' ({mime_type})")
+
+        # --- OPTIMIZATION STEP ---
+        try:
+            content, mime_type = self._optimize_image(content, mime_type)
+        except Exception as e:
+            logger.warning(f"OCRService: Image optimization failed, proceeding with original: {e}")
 
         # --- STAGE 1: GEMINI VISION ---
         if self.gemini_client:
@@ -305,6 +317,33 @@ class OCRService:
 
     def _sum_str(self, a, b) -> str:
         return str(self._to_float(a) + self._to_float(b))
+
+    def _optimize_image(self, content: bytes, mime_type: str) -> (bytes, str):
+        """Resizes and compresses image to reduce payload size and costs."""
+        img = Image.open(io.BytesIO(content))
+        orig_size = len(content)
+        
+        # 1. Resize if too large
+        w, h = img.size
+        if max(w, h) > MAX_IMAGE_DIMENSION:
+            scale = MAX_IMAGE_DIMENSION / max(w, h)
+            new_size = (int(w * scale), int(h * scale))
+            img = img.resize(new_size, Image.Resampling.LANCZOS)
+            logger.info(f"OCRService: Resized image from {w}x{h} to {new_size[0]}x{new_size[1]}")
+
+        # 2. Compress as JPEG
+        if img.mode != 'RGB':
+            img = img.convert('RGB')
+            
+        buffer = io.BytesIO()
+        img.save(buffer, format="JPEG", quality=JPEG_QUALITY, optimize=True)
+        optimized_content = buffer.getvalue()
+        
+        new_size = len(optimized_content)
+        reduction = (1 - new_size / orig_size) * 100
+        logger.info(f"OCRService: Optimized image {orig_size/1024:.1f}KB -> {new_size/1024:.1f}KB ({reduction:.1f}% reduction)")
+        
+        return optimized_content, "image/jpeg"
 
 # ── EXTRACTION PROMPT ─────────────────────────────────────────────────────────
 
