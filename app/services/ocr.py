@@ -14,9 +14,8 @@ class OCRService:
         self.api_key = os.getenv("GEMINI_API_KEY")
         if self.api_key:
             self.client = genai.Client(api_key=self.api_key)
-            # ELITE FIX: Always use a high-performance model. 
-            # Listing models synchronously can hang during server startup.
-            self.model_name = "gemini-1.5-flash"
+            # ELITE FIX: Always use the latest high-performance model. 
+            self.model_name = self._pick_model()
             print(f"OCRService: Initialized with model '{self.model_name}'")
         else:
             print("WARNING: GEMINI_API_KEY not found. OCRService running in MOCK mode.")
@@ -24,20 +23,23 @@ class OCRService:
 
     def _pick_model(self) -> str:
         preferred = [
-            "models/gemini-1.5-flash-latest",
-            "models/gemini-1.5-flash",
-            "models/gemini-1.5-pro-latest",
-            "models/gemini-1.5-pro",
-            "models/gemini-1.0-pro",
+            "gemini-2.0-flash",
+            "gemini-2.0-flash-exp",
+            "gemini-1.5-flash-latest",
+            "gemini-1.5-flash",
+            "gemini-1.5-pro",
         ]
         try:
-            available = {m.name for m in self.client.models.list()}
+            # The new SDK list() returns model objects with name like 'models/gemini-2.0-flash'
+            available_models = self.client.models.list()
+            available_names = {m.name.replace("models/", "") for m in available_models}
+            
             for p in preferred:
-                if p in available:
-                    return p.replace("models/", "")
+                if p in available_names:
+                    return p
         except Exception as e:
-            print(f"WARNING: Could not list models: {e}")
-        return "gemini-1.5-flash"
+            print(f"WARNING: Could not list models: {e}. Defaulting to gemini-2.0-flash")
+        return "gemini-2.0-flash"
 
     # ─────────────────────────────────────────────────────────────────────────
 
