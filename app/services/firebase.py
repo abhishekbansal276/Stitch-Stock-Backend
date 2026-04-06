@@ -12,18 +12,23 @@ def clean_private_key(pk: str) -> str:
     """Helper to format the private key from various environment variable styles."""
     if not pk:
         return ""
-    # 1. Handle literal \n if passed from shell or quoted strings
-    pk = pk.replace("\\n", "\n")
-    # 2. Handle cases where newlines might be missing but the key is one long string
-    # (Sometimes happens with certain CI/CD secrets)
-    if "-----BEGIN PRIVATE KEY-----" in pk and "\n" not in pk[30:-30]:
-        # Attempt to insert newlines every 64 chars if it's one long block
-        # (Though usually \n should be present)
-        pass 
     
-    # 3. Final clean
-    pk = pk.replace('"', '').replace("'", "").strip()
-    return pk
+    # 1. First, replace literal backslash+n with a real newline
+    pk = pk.replace("\\n", "\n")
+    
+    # 2. Handle cases where the string might have been double-encoded
+    # (Removes extra escaped quotes and literal newlines)
+    pk = pk.strip("'").strip('"')
+    
+    # 3. Ensure the header/footer are correctly formatted
+    if "-----BEGIN PRIVATE KEY-----" in pk and "-----END PRIVATE KEY-----" in pk:
+        main_body = pk.replace("-----BEGIN PRIVATE KEY-----", "").replace("-----END PRIVATE KEY-----", "").strip()
+        # Re-join with proper newlines just to be absolutely sure
+        lines = [l.strip() for l in main_body.split("\n") if l.strip()]
+        reconstructed = "-----BEGIN PRIVATE KEY-----\n" + "\n".join(lines) + "\n-----END PRIVATE KEY-----\n"
+        return reconstructed
+        
+    return pk.strip()
 
 
 def initialize_firebase():
