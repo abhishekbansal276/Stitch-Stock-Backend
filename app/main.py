@@ -167,10 +167,20 @@ async def create_stock(
         items = payload.get('items', [])
         user_display = user.get('full_name', user['email'])
         
-        # 1. GENERATE IDs UPFRONT - Use provided IDs if available from frontend
+        # 1. GENERATE MEANINGFUL IDs UPFRONT
         item_ids = []
         for item in items:
-            item_id = item.get('id') or f"STK-{int(time.time())}-{uuid.uuid4().hex[:4].upper()}"
+            p_code = str(item.get('Product Code') or 'UKN').replace(" ", "").upper()
+            batch  = str(item.get('Batch Number') or 'NB').replace(" ", "").upper()
+            # Clean non-alphanumeric chars for barcode safety
+            import re
+            p_code = re.sub(r'[^A-Z0-9]', '', p_code)
+            batch  = re.sub(r'[^A-Z0-9]', '', batch)
+            
+            # STK-[CODE]-[BATCH]-[TIMESTAMP_SUFFIX]
+            ts_suffix = str(int(time.time()))[-4:]
+            item_id = item.get('id') or f"STK-{p_code}-{batch}-{ts_suffix}"
+            
             item_ids.append(item_id)
             item['id'] = item_id # Ensure ID is present for background tasks
         
