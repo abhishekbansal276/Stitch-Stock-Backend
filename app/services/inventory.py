@@ -26,6 +26,7 @@ class InventoryService:
             if float(d.get('qty', 0)) > 0:
                 search_locations.append(d.get('warehouse'))
                 search_locations.append(d.get('warehouse_id'))
+                search_locations.append(d.get('dist_id'))
                 search_locations.append(f"{d.get('warehouse')} - {d.get('location')}")
         
         doc_ref = self.collection.document(barcode_id)
@@ -119,6 +120,7 @@ class InventoryService:
         for d in new_distributions:
             if float(d.get('qty', 0)) > 0:
                 search_locations.append(d.get('warehouse'))
+                search_locations.append(d.get('dist_id'))
                 search_locations.append(f"{d.get('warehouse')} - {d.get('location')}")
         
         new_location_ids = list(set([l for l in search_locations if l]))
@@ -279,6 +281,7 @@ class InventoryService:
         search_locations = []
         for d in cleaned_distributions:
             search_locations.append(d.get('warehouse'))
+            search_locations.append(d.get('dist_id'))
             search_locations.append(f"{d.get('warehouse')} - {d.get('location')}")
         
         new_location_ids = list(set([l for l in search_locations if l]))
