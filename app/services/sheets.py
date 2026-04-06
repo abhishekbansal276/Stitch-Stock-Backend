@@ -12,7 +12,7 @@ from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from google.cloud.firestore_v1.base_query import FieldFilter
 from google.auth import exceptions as auth_exceptions
-from app.services.firebase import db, clean_private_key, BASE_DIR
+from app.services.firebase import db, clean_private_key, BASE_DIR, get_service_account_info
 
 
 class SheetsService:
@@ -45,65 +45,26 @@ class SheetsService:
     # ── SERVICE INIT ──────────────────────────────────────────────────────────
 
     def _initialize_service(self):
-        """Build the Sheets API client with robust file-first priority."""
-        # 1. File-based priority (Repository uploaded)
-        sa_file = os.getenv("SERVICE_ACCOUNT_FILE", "serviceAccountKey.json")
-        abs_sa_path = BASE_DIR / sa_file
-        if abs_sa_path.exists():
+        """Build the Sheets API client with robust credential triaging."""
+        info = get_service_account_info()
+        if info:
             try:
-                creds = service_account.Credentials.from_service_account_file(
-                    str(abs_sa_path), scopes=self.SCOPES)
-                print(f"SheetsService: Initialized from absolute repository file: {abs_sa_path}")
-                return build("sheets", "v4", credentials=creds)
-            except Exception as e:
-                print(f"SheetsService: Repository file check failed ({abs_sa_path}): {e}")
-
-        # 2. Plain JSON env var
-        sa_json = os.getenv("FIREBASE_SERVICE_ACCOUNT_JSON")
-        if sa_json:
-            try:
-                cred_dict = json.loads(sa_json)
-                if "private_key" in cred_dict:
-                    cred_dict["private_key"] = clean_private_key(cred_dict["private_key"])
-                
                 creds = service_account.Credentials.from_service_account_info(
-                    cred_dict, scopes=self.SCOPES)
-                print("SheetsService: Initialized from FIREBASE_SERVICE_ACCOUNT_JSON")
+                    info, scopes=self.SCOPES)
+                print("SheetsService: Initialized with service account info")
                 return build("sheets", "v4", credentials=creds)
             except Exception as e:
-                print(f"SheetsService: failed to build from JSON env var — {e}")
+                print(f"SheetsService: Failed to build from info — {e}")
 
-        # 3. Base64 encoded JSON
-        sa_b64 = os.getenv("FIREBASE_SERVICE_ACCOUNT_B64")
-        if sa_b64:
-            try:
-                import base64
-                decoded = base64.b64decode(sa_b64).decode("utf-8")
-                cred_dict = json.loads(decoded)
-                if "private_key" in cred_dict:
-                    cred_dict["private_key"] = clean_private_key(cred_dict["private_key"])
-                
-                creds = service_account.Credentials.from_service_account_info(
-                    cred_dict, scopes=self.SCOPES)
-                print("SheetsService: credentials loaded from FIREBASE_SERVICE_ACCOUNT_B64")
-                return build("sheets", "v4", credentials=creds)
-            except Exception as e:
-                print(f"SheetsService: failed to build from B64 env var — {e}")
-
-        # 2. File fallback (Absolute Resolve)
-        sa_file = os.getenv("SERVICE_ACCOUNT_FILE", "serviceAccountKey.json")
-        abs_sa_path = BASE_DIR / sa_file
-        if abs_sa_path.exists():
-            try:
-                creds = service_account.Credentials.from_service_account_file(
-                    str(abs_sa_path), scopes=self.SCOPES)
-                print(f"SheetsService: credentials loaded from absolute file: {abs_sa_path}")
-                return build("sheets", "v4", credentials=creds)
-            except Exception as e:
-                print(f"SheetsService: failed to load credentials from file {abs_sa_path} — {e}")
-        
-        print("WARNING: SheetsService running in MOCK mode (no credentials found).")
-        return None
+        # FINAL FALLBACK (e.g. for CI/CD or Cloud Run)
+        try:
+            from google import auth
+            creds, _ = auth.default(scopes=self.SCOPES)
+            print("SheetsService: Initialized with default Application Credentials")
+            return build("sheets", "v4", credentials=creds)
+        except Exception as e:
+            print(f"SheetsService: Could not initialize (no creds) — {e}")
+            return None
 
     # ── SHEET BOOTSTRAP ───────────────────────────────────────────────────────
 
