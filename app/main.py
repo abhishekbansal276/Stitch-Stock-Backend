@@ -99,13 +99,15 @@ async def create_stock(
         items = payload.get('items', [])
         user_display = user.get('full_name', user['email'])
         
-        # 1. GENERATE IDs UPFRONT - For $O(1)$ instantaneous return
+        # 1. GENERATE IDs UPFRONT - Use provided IDs if available from frontend
         item_ids = []
         for item in items:
-            item_id = f"STK-{int(time.time())}-{uuid.uuid4().hex[:4].upper()}"
+            item_id = item.get('id') or f"STK-{int(time.time())}-{uuid.uuid4().hex[:4].upper()}"
             item_ids.append(item_id)
-            item['id'] = item_id # Inject ID for background processing
+            item['id'] = item_id # Ensure ID is present for background tasks
         
+        print(f"🚀 INGESTION START: Received {len(items)} items. IDs: {item_ids}")
+
         # 3. BACKGROUND TASKS (Heavy / Slow Operations)
         background_tasks.add_task(_process_async_ingestion, header, items, item_ids, user)
         
@@ -113,7 +115,7 @@ async def create_stock(
             "message": "Stock registration initiated. Tracking IDs generated.", 
             "status": "success",
             "stock_item_ids": item_ids,
-            "items": items # Contains the generated IDs
+            "items": items 
         }
     except Exception as e:
         import traceback
@@ -126,29 +128,43 @@ async def _process_async_ingestion(header: dict, items: list, item_ids: list, us
         user_display = user.get('full_name', user['email'])
         
         # 1. Update Firestore & Google Sheets
-        # We perform these as a "batch" but handle item-level failures
+        # Sheets Save (Batch logic)
+        try:
+            print(f"📊 SYNCING TO SHEETS: Batch size {len(item_ids)}")
+            sheets_service.save_stock_batch(header, items, item_ids, user_display)
+        except Exception as sheet_err:
+            print(f"❌ SHEETS CRITICAL ERROR: {sheet_err}")
+            traceback.print_exc()
+            # If sheets fail, we still try to update Firestore status to 'error'
+            for item_id in item_ids:
+                try: inventory_service.db.collection('inventory_positions').document(item_id).update({'sync_status': 'error', 'sync_error': str(sheet_err)})
+                except: pass
+            return
+
+        # 2. Process Individual Items
         for i, item_id in enumerate(item_ids):
             try:
                 item_data = items[i]
                 
-                # Firestore Save
+                # Firestore Save (Idempotent check)
                 distributions = item_data.get('distributions', [
                     {'loc_id': 'default', 'loc_name': 'Main Floor', 'qty': item_data.get('Quantity Received', 0)}
                 ])
-                inventory_service.save_position(
-                    item_id, item_data.get('Product Name'), 
-                    item_data.get('Product Code'), 
-                    item_data.get('Unit', 'PCS'),
-                    distributions
-                )
                 
-                # Sheets Save (Individual item sync within batch logic)
-                # Note: save_stock_batch internally manages its own loop for now
-                # but we call it for the whole batch for efficiency.
-                if i == 0: # Call once for the batch
-                    sheets_service.save_stock_batch(header, items, item_ids, user_display)
+                # Only save to Firestore if it doesn't already exist (Avoid overwriting app-side write)
+                doc_ref = inventory_service.db.collection('inventory_positions').document(item_id)
+                if not doc_ref.get().exists:
+                    inventory_service.save_position(
+                        item_id, item_data.get('Product Name'), 
+                        item_data.get('Product Code'), 
+                        item_data.get('Unit', 'PCS'),
+                        distributions
+                    )
+                
+                # MARK AS SYNCED ✅
+                doc_ref.update({'sync_status': 'synced', 'sync_at': int(time.time())})
 
-                # 2. IF SUCCESSFUL -> LOG & NOTIFY
+                # LOG & NOTIFY
                 qty_val = 0.0
                 try: qty_val = float(item_data.get('Quantity Received', 0))
                 except: pass
@@ -159,14 +175,13 @@ async def _process_async_ingestion(header: dict, items: list, item_ids: list, us
                     item_name=item_data.get('Product Name', 'New Stock'),
                     product_code=item_data.get('Product Code', 'N/A'),
                     qty_change=qty_val,
-                    location="Main Floor",
+                    location="System Ingestion",
                     description=item_data.get('Description', '')
                 )
                 
-                # 3. Barcode Archiving (Asset Gen)
+                # Barcode Archiving
                 _process_barcode_archiving(item_id, item_data.get('Product Name', 'Stock Item'))
                 
-                # 4. Distribution Labels
                 for dist in item_data.get('distributions', []):
                     dist_id = dist.get('dist_id')
                     dist_label = f"{item_data.get('Product Name')} @ {dist.get('warehouse')}"
@@ -174,11 +189,15 @@ async def _process_async_ingestion(header: dict, items: list, item_ids: list, us
                         _process_barcode_archiving(dist_id, dist_label, is_position=True, parent_id=item_id)
                         
             except Exception as item_err:
-                print(f"FAILED TO PROCESS ITEM {item_id}: {item_err}")
+                print(f"⚠️ ITEM SYNC FAILURE [{item_id}]: {item_err}")
+                traceback.print_exc()
                 continue
 
+        print(f"✅ BATCH SYNC COMPLETED: {item_ids}")
+
     except Exception as e:
-        print(f"CRITICAL ASYNC INGESTION FAILURE: {e}")
+        print(f"🛑 CRITICAL ASYNC INGESTION FAILURE: {e}")
+        traceback.print_exc()
 
 def _process_barcode_archiving(code_id: str, label: str, is_position: bool = False, parent_id: str = None):
     """Internal helper to generate/upload QR and update storage in background."""
