@@ -301,6 +301,17 @@ class SheetsService:
                                       location=d_loc, item_name=name)
                     self._update_summary(code, name, d_qty, unit, "IN")
 
+    def sync_batch_to_ledger(self, items: List[Dict], user_email: str) -> bool:
+        """Unified entry point for background sync of already-flattened items."""
+        try:
+            item_ids = [item.get("id") or item.get("Barcode ID") for item in items]
+            # Process via the main batch logic with an empty header
+            self.save_stock_batch({}, items, item_ids, user_email)
+            return True
+        except Exception as e:
+            print(f"Sheets Sync Error: {e}")
+            return False
+
     def add_movement(self, barcode_id: str, trans_id: str, move_type: str,
                      qty: float, user_email: str, warehouse: str = "Main Warehouse",
                      location: str = "Full Receive", dist_id: str = "N/A",
