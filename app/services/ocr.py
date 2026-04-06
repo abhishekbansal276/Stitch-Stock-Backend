@@ -57,22 +57,42 @@ class OCRService:
         try:
             print(f"OCRService: Requesting Gemini extraction [Model: {self.model_name}]...")
             import time
-            start_time = time.time()
+           # 3. GENERATE JSON via Gemini 1.5 Flash (RETRY LOGIC ENABLED)
+            max_retries = 3
+            retry_delay = 5 # Start with 5s
             
-            response = self.client.models.generate_content(
-                model=self.model_name,
-                contents=[
-                    types.Part.from_bytes(data=content, mime_type=mime_type),
-                    types.Part.from_text(text=EXTRACTION_PROMPT),
-                ],
-                config=types.GenerateContentConfig(
-                    response_mime_type="application/json",
-                    temperature=0,
-                    max_output_tokens=4096,
-                ),
-            )
-
-            print(f"OCRService: Gemini API responded in {time.time() - start_time:.2f}s")
+            for attempt in range(max_retries):
+                try:
+                    response = self.client.models.generate_content(
+                        model=self.model_name,
+                        contents=[
+                            types.Part.from_bytes(data=content, mime_type=mime_type),
+                            types.Part.from_text(text=EXTRACTION_PROMPT),
+                        ],
+                        config=types.GenerateContentConfig(
+                            response_mime_type="application/json",
+                            temperature=0,
+                            max_output_tokens=4096,
+                        ),
+                    )
+                    
+                    print(f"OCRService: {self.model_name} responded successfully.")
+                    break # Success!
+                    
+                except Exception as e:
+                    err_str = str(e)
+                    if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
+                        if attempt < max_retries - 1:
+                            wait_time = retry_delay * (attempt + 1)
+                            print(f"⚠️ Quota Exceeded (429). Retrying in {wait_time}s... (Attempt {attempt+1}/{max_retries})")
+                            time.sleep(wait_time)
+                            continue
+                        else:
+                            raise Exception("Gemini API Quota Exceeded. Please wait a few minutes and try again.")
+                    else:
+                        raise e
+            
+            # 4. PARSE & CLEANUP
             raw = response.text.strip()
             # Strip markdown fences if the model ignores response_mime_type
             raw = re.sub(r"^```(?:json)?", "", raw, flags=re.IGNORECASE).strip()
