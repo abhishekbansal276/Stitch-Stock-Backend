@@ -77,8 +77,16 @@ class SheetsService:
             return self._cached_header_map
 
         try:
-            metadata = self.service.spreadsheets().get(
+            # 1. Fetch metadata to see existing sheets
+            spreadsheet = self.service.spreadsheets().get(
                 spreadsheetId=self.spreadsheet_id).execute()
+            sheets = spreadsheet.get("sheets", [])
+            existing = {s["properties"]["title"]: s["properties"]["sheetId"] for s in sheets}
+
+            # 2. Ensure each core sheet looks correct
+            self._ensure_sheet("Stock Register", self.BASE_SCHEMA, existing)
+            self._ensure_sheet("Stock Movements", self.MOVEMENTS_SCHEMA, existing)
+            self._ensure_sheet("Stock Summary", self.SUMMARY_SCHEMA, existing)
 
             self._cached_header_map = {n: i for i, n in enumerate(self.BASE_SCHEMA)}
             self._cache_expiry = time.time() + 300
