@@ -153,7 +153,8 @@ class OCRService:
         # --- STAGE 1: GEMINI VISION ---
         if self.gemini_client:
             try:
-                return self._run_gemini_vision(content, mime_type)
+                res = self._run_gemini_vision(content, mime_type)
+                return self._post_process_results(res)
             except Exception as e:
                 logger.warning(f"OCRService: Stage 1 (Gemini Vision) failed: {e}")
                 if self.groq_client:
@@ -164,7 +165,8 @@ class OCRService:
         # --- STAGE 2: GROQ VISION FALLBACK ---
         if self.groq_client:
             try:
-                return self._run_groq_vision(content, mime_type)
+                res = self._run_groq_vision(content, mime_type)
+                return self._post_process_results(res)
             except Exception as e:
                 logger.error(f"OCRService: Stage 2 (Groq Vision) failed: {e}")
                 # If we get a "model_decommissioned" or 400 error, try rotating and retrying once
@@ -200,7 +202,7 @@ class OCRService:
                 
                 # Check for parsed response directly (Elite SDK feature)
                 if hasattr(response, "parsed") and response.parsed:
-                    # Convert Pydantic model to the exact dictionary format expected by the frontend
+                    # Convert Pydantic model to dict
                     return response.parsed.model_dump(by_alias=True)
                 
                 return self._clean_and_parse(response.text.strip())
@@ -298,6 +300,36 @@ class OCRService:
         except:
             pass
 
+    def _post_process_results(self, data: Dict) -> Dict:
+        """Centralized cleanup, consolidation, and normalization for all providers."""
+        if not data: return {}
+        
+        # 1. Ensure keys exist
+        if "items" not in data: data["items"] = []
+        if "header" not in data: data["header"] = {}
+        
+        # 2. Consolidate items with same Product Code
+        data["items"] = self._consolidate(data["items"])
+        
+        # 3. Unit Normalization (Elite Correction)
+        for item in data["items"]:
+            # Pick 'Unit' or 'UO' or 'UOM'
+            unit = str(item.get("Unit") or item.get("UO") or item.get("UOM") or "").upper().strip()
+            
+            if any(x in unit for x in ["METRIC TON", "MTN", "M/T", "TONNE", "TONS", "METRIC T", " MT", "MT "]) or unit == "MT" or unit == "TO":
+                item["Unit"] = "MT"
+            elif any(x in unit for x in ["PIECE", "PCS", "PIECES", "NOS", "NUMBER", " NO"]):
+                item["Unit"] = "PCS"
+            elif any(x in unit for x in ["KILOGRAM", "KG.", "KGS", "K.G"]) or unit == "KG":
+                item["Unit"] = "KG"
+            elif unit:
+                item["Unit"] = unit # Keep original if not matched but exists
+            else:
+                item["Unit"] = "PCS" # Default fallback
+                
+        logger.info(f"OCRService: Post-processed results. {len(data['items'])} items consolidated.")
+        return data
+
     # ── CLEAN & PARSE ─────────────────────────────────────────────────────────
 
     def _clean_and_parse(self, raw: str) -> Dict:
@@ -318,11 +350,6 @@ class OCRService:
             raw = re.sub(r',\s*\]', ']', raw)
             
             data = json.loads(raw)
-            if "items" not in data:
-                data["items"] = []
-            
-            data["items"] = self._consolidate(data.get("items", []))
-            logger.info(f"OCRService: Extraction complete. Found {len(data['items'])} line items.")
             return data
         except Exception as e:
             logger.error(f"OCRService: JSON Parsing Error: {e}\nRaw output: {raw[:200]}...")
@@ -331,27 +358,32 @@ class OCRService:
     def _consolidate(self, items: List[Dict]) -> List[Dict]:
         merged: Dict[str, Dict] = {}
         for item in items:
-            key = str(item.get("Product Code") or item.get("Product Name") or "UNKNOWN").strip()
+            p_code = str(item.get("Product Code") or "").strip().upper()
+            p_name = str(item.get("Product Name") or "").strip().upper()
+            
+            # Key priority: Product Code if valid, else Product Name
+            key = p_code if (p_code and p_code not in ["...", "NONE", "UNKNOWN"]) else p_name
+            if not key: key = "UNKNOWN"
+
             if key in merged:
                 base = merged[key]
                 base["Quantity Received"] = self._sum_str(
                     base.get("Quantity Received"), item.get("Quantity Received"))
-                base["Number of Bags"] = self._sum_str(
-                    base.get("Number of Bags"), item.get("Number of Bags"))
+                base["Number of Bags"] = int(float(self._sum_str(
+                    base.get("Number of Bags", 0), item.get("Number of Bags", 0))))
                 base["Total Amount"] = (
                     self._to_float(base.get("Total Amount"))
                     + self._to_float(item.get("Total Amount")))
-                base["Final Amount"] = (
-                    self._to_float(base.get("Final Amount"))
-                    + self._to_float(item.get("Final Amount")))
                 
-                # --- NEW: Merge Tax Lists ---
-                base["Taxes"] = self._merge_taxes(base.get("Taxes", []), item.get("Taxes", []))
-
-                if not base.get("Unit") or base.get("Unit") == "PCS":
-                    base["Unit"] = item.get("Unit") or base.get("Unit")
-                if item.get("Batch Number") and item["Batch Number"] not in str(base.get("Batch Number", "")):
-                    base["Batch Number"] = f"{base.get('Batch Number', '')}, {item['Batch Number']}".strip(", ")
+                # --- Elite Batch Merger ---
+                b1 = str(base.get("Batch Number", "")).strip()
+                b2 = str(item.get("Batch Number", "")).strip()
+                
+                if b2 and b2 not in b1:
+                    if b1 and b1 not in ["...", "NONE", "UNKNOWN"]:
+                        base["Batch Number"] = f"{b1}, {b2}"
+                    else:
+                        base["Batch Number"] = b2
             else:
                 merged[key] = dict(item)
         return list(merged.values())
@@ -359,7 +391,7 @@ class OCRService:
     def _merge_taxes(self, taxes1: List[Dict], taxes2: List[Dict]) -> List[Dict]:
         """Sums amounts for taxes with the same label."""
         tax_map: Dict[str, float] = {}
-        for t in taxes1 + taxes2:
+        for t in (taxes1 or []) + (taxes2 or []):
             if isinstance(t, dict):
                 label = str(t.get("label", "Tax")).strip().upper()
                 amt = self._to_float(t.get("amount", 0))
@@ -371,7 +403,9 @@ class OCRService:
         if isinstance(val, (int, float)):
             return float(val)
         try:
-            nums = re.findall(r"[-+]?\d*\.?\d+", str(val))
+            # Handle cases with commas like "1,234.56"
+            clean_val = str(val).replace(",", "")
+            nums = re.findall(r"[-+]?\d*\.?\d+", clean_val)
             return float(nums[0]) if nums else 0.0
         except Exception:
             return 0.0
