@@ -16,15 +16,15 @@ def initialize_firebase():
       2. FIREBASE_SERVICE_ACCOUNT_B64  - Base64 encoded JSON string
       3. SERVICE_ACCOUNT_KEY - path to a local .json file (Local Fallback)
     """
+    """Build the Firestore client with JSON-First priority."""
     if not firebase_admin._apps:
-        # 1. Plain JSON string from Env
+        # 1. Plain JSON env var (PRIMARY as requested by user)
         sa_json = os.getenv("FIREBASE_SERVICE_ACCOUNT_JSON")
         if sa_json:
             try:
                 cred_dict = json.loads(sa_json)
-                # ELITE FIX: Handle literal \n in private_key if passed from env var
                 if "private_key" in cred_dict:
-                    cred_dict["private_key"] = cred_dict["private_key"].replace("\\n", "\n")
+                    cred_dict["private_key"] = clean_private_key(cred_dict["private_key"])
                 
                 cred = credentials.Certificate(cred_dict)
                 firebase_admin.initialize_app(cred)
@@ -33,7 +33,19 @@ def initialize_firebase():
             except Exception as e:
                 print(f"Firebase: Failed to parse FIREBASE_SERVICE_ACCOUNT_JSON: {e}")
 
-        # 2. Base64 Encoded JSON from Env
+        # 2. File-based fallback (Repository uploaded)
+        sa_file = os.getenv("SERVICE_ACCOUNT_KEY", "serviceAccountKey.json")
+        abs_sa_path = BASE_DIR / sa_file
+        if abs_sa_path.exists():
+            try:
+                cred = credentials.Certificate(str(abs_sa_path))
+                firebase_admin.initialize_app(cred)
+                print(f"Firebase: Initialized from absolute repository file: {abs_sa_path}")
+                return firestore.client()
+            except Exception as e:
+                print(f"Firebase: Repository file check failed ({abs_sa_path}): {e}")
+
+        # 3. Base64 fallback (Legacy)
         sa_b64 = os.getenv("FIREBASE_SERVICE_ACCOUNT_B64")
         if sa_b64:
             try:
@@ -45,15 +57,6 @@ def initialize_firebase():
                 return firestore.client()
             except Exception as e:
                 print(f"Firebase: Failed to parse FIREBASE_SERVICE_ACCOUNT_B64: {e}")
-
-        # 3. File-based fallback
-        service_account_path = os.getenv("SERVICE_ACCOUNT_KEY", "serviceAccountKey.json")
-        if not os.path.exists(service_account_path) and os.path.exists("../" + service_account_path):
-            service_account_path = "../" + service_account_path
-
-        if os.path.exists(service_account_path):
-            try:
-                cred = credentials.Certificate(service_account_path)
                 firebase_admin.initialize_app(cred)
                 print(f"Firebase: Initialized from file: {service_account_path}")
                 return firestore.client()

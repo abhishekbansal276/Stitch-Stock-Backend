@@ -56,27 +56,30 @@ class SheetsService:
                 # ELITE FIX: Handle literal \n in private_key if passed from env var
                 if "private_key" in cred_dict:
                     cred_dict["private_key"] = cred_dict["private_key"].replace("\\n", "\n")
+                    cred_dict["private_key"] = clean_private_key(cred_dict["private_key"])
                 
                 creds = service_account.Credentials.from_service_account_info(
                     cred_dict, scopes=self.SCOPES)
-                print("SheetsService: credentials loaded from FIREBASE_SERVICE_ACCOUNT_JSON")
+                print("SheetsService: Initialized from FIREBASE_SERVICE_ACCOUNT_JSON")
                 return build("sheets", "v4", credentials=creds)
-            except json.JSONDecodeError as e:
-                print(f"SheetsService: FIREBASE_SERVICE_ACCOUNT_JSON is not valid JSON — {e}")
             except Exception as e:
-                print(f"SheetsService: failed to build service from JSON env var — {e}")
+                print(f"SheetsService: failed to build from JSON env var — {e}")
 
-        # 2. File fallback
+        # 2. File-based fallback (Repository uploaded)
         sa_file = os.getenv("SERVICE_ACCOUNT_FILE", "serviceAccountKey.json")
-        if os.path.exists(sa_file):
+        abs_sa_path = BASE_DIR / sa_file
+        if abs_sa_path.exists():
             try:
                 creds = service_account.Credentials.from_service_account_file(
-                    sa_file, scopes=self.SCOPES)
-                print(f"SheetsService: credentials loaded from file: {sa_file}")
+                    str(abs_sa_path), scopes=self.SCOPES)
+                print(f"SheetsService: Initialized from absolute repository file: {abs_sa_path}")
                 return build("sheets", "v4", credentials=creds)
             except Exception as e:
-                print(f"SheetsService: failed to load credentials from file {sa_file} — {e}")
+                print(f"SheetsService: Repository file check failed ({abs_sa_path}): {e}")
 
+        # 3. Base64 fallback (Legacy)
+        sa_b64 = os.getenv("FIREBASE_SERVICE_ACCOUNT_B64")
+        
         print("WARNING: SheetsService running in MOCK mode (no credentials found).")
         return None
 

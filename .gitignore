@@ -157,3 +157,4 @@ cython_debug/
 *.pdf
 *.txt
 prd_extracted.txt
+serviceAccountKey.json
