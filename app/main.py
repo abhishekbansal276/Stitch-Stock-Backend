@@ -1,8 +1,10 @@
 import time
 import os
 import uuid
+import traceback
+from typing import List, Dict
 from dotenv import load_dotenv
-from fastapi import FastAPI, UploadFile, File, Depends, HTTPException
+from fastapi import FastAPI, UploadFile, File, Depends, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from app.routers import users
 from app.services.firebase import initialize_firebase, db
@@ -152,7 +154,7 @@ async def _process_async_ingestion(header: dict, items: list, item_ids: list, us
                 ])
                 
                 # Only save to Firestore if it doesn't already exist (Avoid overwriting app-side write)
-                doc_ref = inventory_service.db.collection('inventory_positions').document(item_id)
+                doc_ref = inventory_service.collection.document(item_id)
                 if not doc_ref.get().exists:
                     inventory_service.save_position(
                         item_id, item_data.get('Product Name'), 

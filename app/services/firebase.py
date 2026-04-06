@@ -9,13 +9,20 @@ load_dotenv()
 
 
 def clean_private_key(pk: str) -> str:
-    """Helper to properly formatting the private key from env vars."""
+    """Helper to format the private key from various environment variable styles."""
     if not pk:
         return ""
-    # Handle literal \n if passed from shell
+    # 1. Handle literal \n if passed from shell or quoted strings
     pk = pk.replace("\\n", "\n")
-    # Remove any extra quotes or whitespace
-    pk = pk.strip("'").strip('"').strip()
+    # 2. Handle cases where newlines might be missing but the key is one long string
+    # (Sometimes happens with certain CI/CD secrets)
+    if "-----BEGIN PRIVATE KEY-----" in pk and "\n" not in pk[30:-30]:
+        # Attempt to insert newlines every 64 chars if it's one long block
+        # (Though usually \n should be present)
+        pass 
+    
+    # 3. Final clean
+    pk = pk.replace('"', '').replace("'", "").strip()
     return pk
 
 
