@@ -282,16 +282,69 @@ class OCRService:
 # ── EXTRACTION PROMPT ─────────────────────────────────────────────────────────
 
 EXTRACTION_PROMPT = """
-You are an Inventory Auditor AI. Extract invoice data into JSON format. Match these fields:
-header: {Date, Invoice Number, Supplier Name, Supplier GST, Vehicle Number, Transporter Name, Transport / Freight}
-items: [{Product Code, Product Name, Model Name, Batch Number, Quantity Received, Unit, Number of Bags, Rate per Unit, Total Amount, Taxes (IGST/CGST/SGST), Final Amount, Remarks}]
+You are an elite Inventory Auditor AI. Your job is to extract data with 100% accuracy 
+from Indian supplier invoices and delivery challans into the JSON format below.
 
-Rules:
-1. Return ONLY JSON.
-2. If fields missing, use null.
-3. Quantities as numbers/strings.
-4. Normalize dates to YYYY-MM-DD.
-5. All amounts numeric.
+═══════════════════════════════════════════════════════════════════
+OUTPUT — Return ONLY this JSON. No explanation. No markdown fences.
+═══════════════════════════════════════════════════════════════════
+{
+  "header": {
+    "Date": "YYYY-MM-DD",
+    "Invoice Number": "...",
+    "Supplier Name": "...",
+    "Supplier GST": "...",
+    "Vehicle Number": "...",
+    "Transporter Name": "...",
+    "Transport / Freight": 0.0
+  },
+  "items": [
+    {
+      "Product Code": "...",
+      "Product Name": "...",
+      "Model Name": "...",
+      "Batch Number": "...",
+      "Quantity Received": "...",
+      "Unit": "...",
+      "Number of Bags": "...",
+      "Rate per Unit": 0.0,
+      "Total Amount": 0.0,
+      "Taxes (IGST/CGST/SGST)": "...",
+      "Final Amount": 0.0,
+      "Remarks": "..."
+    }
+  ]
+}
+
+═══════════════════════════════════════════════
+FIELD MAPPING — accept ANY of these label aliases
+═══════════════════════════════════════════════
+
+▸ Date: Date, Dated, Bill Date, Date of Issue, Doc Date, Invoice Date...
+▸ Invoice Number: Invoice No, Bill No, Bill Number, Serial No, Ref No, Challan No, D.O. No, Tax Invoice No...
+▸ Supplier Name: Supplier, Sold By, Seller, From, Consignor, Company...
+▸ Supplier GST: GST No, GSTIN, GST Number, Tax ID, TIN No...
+▸ Vehicle Number: Vehicle No, Veh. No, Truck No, RC No, Registration Number...
+▸ Transport / Freight: Freight, Transport Charges, Cartage, Delivery Charges...
+▸ Product Code: Product Code, Item Code, Part No, SKU, HSN, Article No, Model No...
+▸ Product Name: Description, Description of Goods, Product Name, Material...
+▸ Quantity Received: Quantity, Qty, Qty Received, Received Qty, Nos, Pcs...
+▸ Unit: UOM, Unit, Measure (MT, TO, T, KG, PCS, NOS, BAG)...
+▸ Number of Bags: No. of Bags, Bags, Bag Count, Packs, Cartons...
+▸ Rate per Unit: Rate, Price, Unit Price, Price/UOM, Basic Rate...
+▸ Total Amount: Amount, Taxable Amount, Taxable Value, Sub Total, Value, Amount before Tax...
+▸ Taxes (IGST/CGST/SGST): IGST, CGST, SGST, GST, Tax Amount (Sum all components)...
+▸ Final Amount: Final Amount, Grand Total, Total Amount, Invoice Total, Net Payable, Net Amount, Total Value, Balance Due, ROUND OFF TOTAL...
+▸ Remarks: Remarks, Notes, Handwritten or stamped annotations.
+
+═══════════════════════════════════════
+EXTRACTION RULES
+═══════════════════════════════════════
+1. SCAN THE ENTIRE DOCUMENT: Final Amount / Grand Total is almost always at the BOTTOM footer.
+2. AMIGUOUS FIELDS: If multiple totals exist, use the one labeled 'Grand Total' or 'Payable'.
+3. NO PLACEHOLDERS: Use null if genuinely missing.
+4. CLEAN NUMBERS: Strip currency symbols (₹, Rs) and remove commas. (e.g. "1,234.00" -> 1234.00).
+5. DATE NORMALISATION: Convert to YYYY-MM-DD.
 """
 
 ocr_service = OCRService()
