@@ -175,11 +175,31 @@ class InventoryService:
         # lookups will fail gracefully if distributions change.
         return new_total
 
-    def remove_stock_spatial(self, barcode_id: str, loc_id: str, qty: float):
+    def remove_stock_spatial(self, barcode_id: str, loc_id: str, qty: float, user: dict = None):
         """Wrapper to perform a safe atomic deduction."""
         doc_ref = self.collection.document(barcode_id)
         transaction = db.transaction()
-        return self.deduct_from_location(transaction, doc_ref, loc_id, qty)
+        new_total = self.deduct_from_location(transaction, doc_ref, loc_id, qty)
+        
+        # ── SYNC TO SHEETS ──
+        try:
+            from app.services.sheets import sheets_service
+            # Fetch doc again to get warehouse/location for movement record
+            data = doc_ref.get().to_dict()
+            dist = next((d for d in data.get('distributions', []) if d.get('dist_id') == loc_id), {})
+            user_display = user.get('full_name', user['email']) if user else "System"
+            
+            sheets_service.record_dispatch(
+                barcode_id=barcode_id,
+                qty=qty,
+                warehouse=dist.get('warehouse', 'N/A'),
+                location=dist.get('location', 'N/A'),
+                user_display=user_display
+            )
+        except Exception as e:
+            print(f"⚠️ Sheets Sync Failed (Dispatch): {e}")
+            
+        return new_total
 
     # --- Warehouse Explorer & Transfer Methods ---
 

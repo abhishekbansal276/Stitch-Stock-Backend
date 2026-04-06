@@ -336,18 +336,10 @@ async def remove_stock(
         if not item:
             raise HTTPException(status_code=404, detail="Stock item not found")
             
-        # 1. Atomic Firestore Deduction (Spatial Map)
-        inventory_service.remove_stock_spatial(stock_item_id, loc_id, qty_to_remove)
+        # 1. Atomic Firestore Deduction + Excel Sync (Handled inside service)
+        new_remaining = inventory_service.remove_stock_spatial(stock_item_id, loc_id, qty_to_remove, user=user)
         
-        # 2. Update Sheets Ledger
-        new_remaining = item['quantity_remaining'] - qty_to_remove
-        sheets_service.update_stock_quantity(stock_item_id, new_remaining)
-            
-        # 3. Record Movement (OUT) with Location Tag
-        trans_id = payload.get('transaction_id', f"OUT-{int(time.time())}")
-        sheets_service.add_movement(stock_item_id, trans_id, 'OUT', -qty_to_remove, user['email'], location=loc_name)
-        
-        # 4. Log Activity & Notify Admins
+        # 2. Log Activity & Notify Admins
         activity_service.log_and_notify(
             user=user,
             action_type="OUT",
@@ -355,7 +347,7 @@ async def remove_stock(
             product_code=item.get('product_code', stock_item_id),
             qty_change=-qty_to_remove,
             location=loc_name,
-            description=item.get('description', '')
+            description=remarks
         )
         
         return {"message": "Stock removed successfully", "remaining": new_remaining}

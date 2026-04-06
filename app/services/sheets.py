@@ -1139,6 +1139,116 @@ class SheetsService:
     def get_current_headers(self) -> List[str]:
         return self.BASE_SCHEMA
 
+    def record_dispatch(self, barcode_id: str, qty: float, warehouse: str = "", location: str = "", user_display: str = "System"):
+        """
+        Deducts stock from the spreadsheet ledger and records the movement.
+        """
+        if not self.service: return
+        try:
+            h = {n: i for i, n in enumerate(self.BASE_SCHEMA)}
+            row_idx = self._find_row_by_col(h.get("Barcode ID", 19), barcode_id)
+            
+            if row_idx == -1:
+                print(f"⚠️ Sheets Deduction: Barcode ID {barcode_id} not found in Register.")
+                return
+
+            # 1. Update Stock Register Row
+            qty_col = self._get_col_letter(h.get("Quantity Received", 7))
+            updated_at_col = self._get_col_letter(h.get("Updated At", 23))
+            updated_by_col = self._get_col_letter(h.get("Updated By", 24))
+
+            # Fetch current qty
+            res = self.service.spreadsheets().values().get(
+                spreadsheetId=self.spreadsheet_id,
+                range=f"Stock Register!{qty_col}{row_idx}"
+            ).execute()
+            curr_qty = self._to_float(res.get("values", [[0]])[0][0])
+            new_qty = max(0.0, curr_qty - qty)
+
+            # Batch update the row
+            self.service.spreadsheets().values().batchUpdate(
+                spreadsheetId=self.spreadsheet_id,
+                body={"valueInputOption": "USER_ENTERED", "data": [
+                    {"range": f"Stock Register!{qty_col}{row_idx}", "values": [[new_qty]]},
+                    {"range": f"Stock Register!{updated_at_col}{row_idx}:{updated_by_col}{row_idx}", "values": [[self._get_now_ist(), user_display]]}
+                ]}
+            ).execute()
+
+            # 2. Record Movement
+            # We need Product Name for movement record
+            name_res = self.service.spreadsheets().values().get(
+                spreadsheetId=self.spreadsheet_id,
+                range=f"Stock Register!{self._get_col_letter(h.get('Product Name', 4))}{row_idx}"
+            ).execute()
+            p_name = name_res.get("values", [["Unknown"]])[0][0]
+            p_code = "" # Optional
+            
+            movement_row = [
+                self._get_now_ist(), p_name, "OUT", qty, warehouse, location, user_display,
+                f"MOV-{int(time.time())}", barcode_id, "", "", ""
+            ]
+            self._append_row("Stock Movements", movement_row)
+
+            # 3. Update Summary
+            code_res = self.service.spreadsheets().values().get(
+                spreadsheetId=self.spreadsheet_id,
+                range=f"Stock Register!{self._get_col_letter(h.get('Product Code', 5))}{row_idx}"
+            ).execute()
+            p_code = code_res.get("values", [[""]])[0][0]
+            
+            if p_code:
+                self._update_summary_row(p_name, p_code, -qty, "OUT")
+
+            print(f"✅ Sheets Sync: Deducted {qty} of {p_name} ({barcode_id})")
+
+        except Exception as e:
+            print(f"Sheets Record Dispatch Error: {e}")
+            traceback.print_exc()
+
+    def _update_summary_row(self, name: str, code: str, qty_delta: float, m_type: str):
+        """Helper to update the aggregate balance and totals in Stock Summary."""
+        if not self.service: return
+        try:
+            res = self.service.spreadsheets().values().get(
+                spreadsheetId=self.spreadsheet_id, range="Stock Summary!A:G"
+            ).execute()
+            rows = res.get("values", [])
+            header = rows[0] if rows else self.SUMMARY_SCHEMA
+            data = rows[1:]
+            
+            found_idx = -1
+            for i, row in enumerate(data):
+                if len(row) >= 2 and str(row[1]).strip() == str(code).strip():
+                    found_idx = i + 2 # +2 because 1-based and skip header
+                    break
+            
+            if found_idx == -1:
+                # Add new summary row
+                new_row = [name, code, qty_delta, "PCS", 
+                           qty_delta if m_type == "IN" else 0.0,
+                           abs(qty_delta) if m_type == "OUT" else 0.0,
+                           self._get_now_ist()]
+                self._append_row("Stock Summary", new_row)
+            else:
+                curr_row = data[found_idx - 2]
+                curr_bal = self._to_float(curr_row[2]) if len(curr_row) > 2 else 0.0
+                curr_in = self._to_float(curr_row[4]) if len(curr_row) > 4 else 0.0
+                curr_out = self._to_float(curr_row[5]) if len(curr_row) > 5 else 0.0
+                
+                new_bal = curr_bal + qty_delta
+                new_in = curr_in + (qty_delta if m_type == "IN" else 0.0)
+                new_out = curr_out + (abs(qty_delta) if m_type == "OUT" else 0.0)
+                
+                update_range = f"Stock Summary!C{found_idx}:G{found_idx}"
+                self.service.spreadsheets().values().update(
+                    spreadsheetId=self.spreadsheet_id,
+                    range=update_range,
+                    valueInputOption="USER_ENTERED",
+                    body={"values": [[new_bal, curr_row[3] if len(curr_row) > 3 else "PCS", new_in, new_out, self._get_now_ist()]]}
+                ).execute()
+        except Exception as e:
+            print(f"Update summary row error: {e}")
+
     def _get_now_ist(self) -> str:
         """Returns current time in Indian Standard Time (UTC+5:30)."""
         # Manual offset for IST (5 hours 30 mins = 19800 seconds)

@@ -360,10 +360,14 @@ class OCRService:
         for item in items:
             p_code = str(item.get("Product Code") or "").strip().upper()
             p_name = str(item.get("Product Name") or "").strip().upper()
+            p_batch = str(item.get("Batch Number") or "").strip().upper()
             
-            # Key priority: Product Code if valid, else Product Name
-            key = p_code if (p_code and p_code not in ["...", "NONE", "UNKNOWN"]) else p_name
-            if not key: key = "UNKNOWN"
+            # Key priority: (Product Code + Batch) if valid, else Product Name
+            code_part = p_code if (p_code and p_code not in ["...", "NONE", "UNKNOWN"]) else p_name
+            if not code_part: code_part = "UNKNOWN"
+            
+            # Composite key ensures different batches stay separate
+            key = f"{code_part}|{p_batch}"
 
             if key in merged:
                 base = merged[key]
