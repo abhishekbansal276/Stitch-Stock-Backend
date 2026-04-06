@@ -44,9 +44,8 @@ class OCRService:
             try:
                 self.groq_client = Groq(api_key=self.groq_key)
                 self.preferred_groq = [
-                    "meta-llama/llama-4-scout-17b-16e-instruct", # Latest 2026 Vision
-                    "llama-3.2-11b-vision-instant",
                     "llama-3.2-90b-vision-preview",
+                    "llama-3.2-11b-vision-preview",
                 ]
                 self.groq_model = self._pick_groq_model()
                 logger.info(f"OCRService: Groq initialized with model: {self.groq_model}")
@@ -239,12 +238,21 @@ class OCRService:
 
     def _clean_and_parse(self, raw: str) -> Dict:
         try:
+            # 1. Basic Cleaning (Markdown fences and whitespace)
             raw = re.sub(r"^```(?:json)?", "", raw, flags=re.IGNORECASE).strip()
             raw = re.sub(r"```$", "", raw).strip()
             s, e = raw.find("{"), raw.rfind("}")
             if s != -1 and e != -1:
                 raw = raw[s : e + 1]
 
+            # 2. Robust Cleaning (Hallucinated scratchpads/calculations)
+            # e.g., "amount": 100, "- calculation" -> "amount": 100
+            raw = re.sub(r'(\d+\.?\d*)\s*,\s*["\']- [^"\'\}]+["\']', r'\1', raw)
+            
+            # 3. Trailing comma cleanup
+            raw = re.sub(r',\s*\}', '}', raw)
+            raw = re.sub(r',\s*\]', ']', raw)
+            
             data = json.loads(raw)
             if "items" not in data:
                 data["items"] = []
@@ -422,11 +430,12 @@ FIELD MAPPING — accept ANY of these label aliases
 ═══════════════════════════════════════
 EXTRACTION_RULES
 ═══════════════════════════════════════
-1. ENHANCED TAX EXTRACTION: Individual tax components (CGST, SGST, IGST) are MANDATORY. Look in the summary table at the bottom if they are not in the line items.
-2. CHARACTER ACCURACY: Be extremely careful with numbers. '8' and '3' look similar; verify against calculations (Total = Qty * Rate). 
-3. NO REMARKS: Do not extract Remarks. This is for manual user input only.
-4. CLEAN NUMBERS: Strip currency symbols (₹, Rs) and remove commas.
-5. DATE NORMALISATION: Convert to YYYY-MM-DD.
+1. STRICT JSON OUTPUT: Return ONLY valid JSON. No scratchpad, no explanations, no math operations inside the JSON values.
+2. ENHANCED TAX EXTRACTION: Individual tax components (CGST, SGST, IGST) are MANDATORY. Look in the summary table at the bottom if they are not in the line items.
+3. CHARACTER ACCURACY: Be extremely careful with numbers. '8' and '3' look similar; verify against calculations (Total = Qty * Rate). 
+4. NO REMARKS: Do not extract Remarks. This is for manual user input only.
+5. CLEAN NUMBERS: Strip currency symbols (₹, Rs) and remove commas.
+6. DATE NORMALISATION: Convert to YYYY-MM-DD.
 """
 
 ocr_service = OCRService()
