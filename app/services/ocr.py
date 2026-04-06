@@ -26,6 +26,10 @@ class OCRService:
         # 1. Gemini Configuration
         self.gemini_key = os.getenv("GEMINI_API_KEY")
         if self.gemini_key:
+            # --- SECURITY-SAFE LOGGING FOR KEY VERIFICATION ---
+            key_id = f"{self.gemini_key[:4]}...{self.gemini_key[-4:]}" if len(self.gemini_key) > 8 else "***"
+            logger.info(f"OCRService: Initializing Gemini with key: {key_id}")
+            
             self.gemini_client = genai.Client(api_key=self.gemini_key)
             self.preferred_gemini = [
                 "gemini-2.0-flash",
