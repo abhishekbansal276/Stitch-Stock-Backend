@@ -1,11 +1,13 @@
 import os
 import json
 import re
-from typing import Dict, List
-
-# ── FIXED: Migrated from deprecated google.generativeai → google.genai ────────
+import time
+from typing import Dict, List, Optional
 from google import genai
 from google.genai import types
+from app.services.local_ocr import local_ocr_service
+
+# ── FIXED: Migrated from deprecated google.generativeai → google.genai ────────
 # ──────────────────────────────────────────────────────────────────────────────
 
 
@@ -54,12 +56,11 @@ class OCRService:
         mime_type = mime_map.get(ext, "image/jpeg")
         print(f"OCRService: Processing '{filename}' (Mime: {mime_type}, Size: {len(content)} bytes)")
 
+        # 3. STAGE 1: Attempt NATIVE GEMINI VISION (Elite Mode)
         try:
             print(f"OCRService: Requesting Gemini extraction [Model: {self.model_name}]...")
-            import time
-           # 3. GENERATE JSON via Gemini 1.5 Flash (RETRY LOGIC ENABLED)
-            max_retries = 3
-            retry_delay = 5 # Start with 5s
+            max_retries = 2 # Lower retries for Vision to fail-fast to local
+            retry_delay = 3
             
             for attempt in range(max_retries):
                 try:
@@ -76,25 +77,60 @@ class OCRService:
                         ),
                     )
                     
-                    print(f"OCRService: {self.model_name} responded successfully.")
-                    break # Success!
+                    print(f"OCRService: {self.model_name} Vision responded successfully.")
+                    raw = response.text.strip()
+                    return self._clean_and_parse(raw)
                     
                 except Exception as e:
-                    err_str = str(e)
+                    err_str = str(e).upper()
                     if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
                         if attempt < max_retries - 1:
-                            wait_time = retry_delay * (attempt + 1)
-                            print(f"⚠️ Quota Exceeded (429). Retrying in {wait_time}s... (Attempt {attempt+1}/{max_retries})")
-                            time.sleep(wait_time)
+                            print(f"⚠️ Quota Warning (429). Retrying Vision...")
+                            time.sleep(retry_delay)
                             continue
                         else:
-                            raise Exception("Gemini API Quota Exceeded. Please wait a few minutes and try again.")
+                            print("🛑 Gemini Vision Quota Hit. FALLING BACK TO LOCAL OCR.")
+                            break # Move to Stage 2
                     else:
-                        raise e
+                        print(f"❌ Vision Error: {e}. Attempting Local OCR.")
+                        break
+
+        except Exception as e:
+            print(f"OCRService: Vision Pipeline pre-flight error: {e}")
+
+        # 4. STAGE 2: LOCAL OCR FALLBACK (Free Mode)
+        print("🛠️ STAGE 2: Starting Local OCR Extraction...")
+        extracted_text = local_ocr_service.extract_text(content)
+        
+        if not extracted_text:
+            raise Exception("Total extraction failure: Vision quota hit and Local OCR failed.")
+
+        try:
+            print(f"OCRService: Sending local text to Gemini [Model: {self.model_name}]...")
+            # We use the same model but send TEXT only. 
+            # Text limits are much higher than Vision limits.
+            text_prompt = f"Convert the following OCR text into structured JSON as per requirements:\n\n{extracted_text}\n\nREMAINDER: {EXTRACTION_PROMPT}"
             
-            # 4. PARSE & CLEANUP
-            raw = response.text.strip()
-            # Strip markdown fences if the model ignores response_mime_type
+            response = self.client.models.generate_content(
+                model=self.model_name,
+                contents=text_prompt,
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                    temperature=0.1,
+                ),
+            )
+            
+            print("✅ Stage 2 Success: Structured data obtained via Local OCR + Text LLM.")
+            return self._clean_and_parse(response.text.strip())
+            
+        except Exception as e:
+            print(f"OCRService Stage 2 Error: {e}")
+            raise Exception(f"Failed to structure data even with local OCR: {str(e)}")
+
+    def _clean_and_parse(self, raw: str) -> Dict:
+        """Standardizes JSON output across any model or source."""
+        try:
+            # Strip markdown fences 
             raw = re.sub(r"^```(?:json)?", "", raw, flags=re.IGNORECASE).strip()
             raw = re.sub(r"```$", "", raw).strip()
             # Grab outermost JSON object
