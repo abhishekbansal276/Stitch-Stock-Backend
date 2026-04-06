@@ -4,9 +4,12 @@ import json
 import firebase_admin
 from firebase_admin import credentials, firestore
 from dotenv import load_dotenv
+from pathlib import Path
 
 load_dotenv()
 
+# Base directory for the project (up to 'backend/' folder)
+BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
 def clean_private_key(pk: str) -> str:
     """Helper to format the private key to the exact PKCS#8 standard (64 chars per line)."""
@@ -73,19 +76,17 @@ def initialize_firebase():
             except Exception as e:
                 print(f"Firebase: Failed to parse FIREBASE_SERVICE_ACCOUNT_B64: {e}")
 
-        # 3. File-based fallback
-        service_account_path = os.getenv("SERVICE_ACCOUNT_KEY", "serviceAccountKey.json")
-        if not os.path.exists(service_account_path) and os.path.exists("../" + service_account_path):
-            service_account_path = "../" + service_account_path
-
-        if os.path.exists(service_account_path):
+        # 3. File fallback (Absolute Resolve)
+        sa_file = os.getenv("SERVICE_ACCOUNT_KEY", "serviceAccountKey.json")
+        abs_sa_path = BASE_DIR / sa_file
+        if abs_sa_path.exists():
             try:
-                cred = credentials.Certificate(service_account_path)
+                cred = credentials.Certificate(str(abs_sa_path))
                 firebase_admin.initialize_app(cred)
-                print(f"Firebase: Initialized from file: {service_account_path}")
+                print(f"Firebase: Initialized from absolute file: {abs_sa_path}")
                 return firestore.client()
             except Exception as e:
-                print(f"Firebase: File initialization skipped ({service_account_path}): {e}")
+                print(f"Firebase: Failed to read from file {abs_sa_path}: {e}")
         
         # FINAL FALLBACK (e.g. for CI/CD or local without key)
         try:

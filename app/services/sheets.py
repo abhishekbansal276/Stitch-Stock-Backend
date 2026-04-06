@@ -10,7 +10,7 @@ from typing import List, Dict
 
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
-from app.services.firebase import db, clean_private_key
+from app.services.firebase import db, clean_private_key, BASE_DIR
 
 
 class SheetsService:
@@ -82,17 +82,18 @@ class SheetsService:
             except Exception as e:
                 print(f"SheetsService: failed to build from B64 env var — {e}")
 
-        # 2. File fallback
+        # 2. File fallback (Absolute Resolve)
         sa_file = os.getenv("SERVICE_ACCOUNT_FILE", "serviceAccountKey.json")
-        if os.path.exists(sa_file):
+        abs_sa_path = BASE_DIR / sa_file
+        if abs_sa_path.exists():
             try:
                 creds = service_account.Credentials.from_service_account_file(
-                    sa_file, scopes=self.SCOPES)
-                print(f"SheetsService: credentials loaded from file: {sa_file}")
+                    str(abs_sa_path), scopes=self.SCOPES)
+                print(f"SheetsService: credentials loaded from absolute file: {abs_sa_path}")
                 return build("sheets", "v4", credentials=creds)
             except Exception as e:
-                print(f"SheetsService: failed to load credentials from file {sa_file} — {e}")
-
+                print(f"SheetsService: failed to load credentials from file {abs_sa_path} — {e}")
+        
         print("WARNING: SheetsService running in MOCK mode (no credentials found).")
         return None
 
