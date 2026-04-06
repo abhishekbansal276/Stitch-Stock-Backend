@@ -58,9 +58,9 @@ class SheetsService:
         # 3. Quantity / Packaging
         "Quantity Received", "Unit", "Number of Bags",
         # 4. Item Financials
-        "Rate per Unit", "Total Amount", "Taxes (IGST/CGST/SGST)", "Final Amount",
+        "Rate per Unit", "Item Amount",
         # 5. Bill Totals
-        "Sub Total", "Transport / Freight", "Grand Total",
+        "Taxable Amount", "Taxes (IGST/CGST/SGST)", "Transport / Freight", "Grand Total",
         # 6. Transport
         "Vehicle Number", "Transporter Name",
         # 7. System Meta
@@ -88,21 +88,20 @@ class SheetsService:
         8: 80,    # Unit
         9: 110,   # Number of Bags
         10: 130,  # Rate per Unit
-        11: 140,  # Total Amount
-        12: 190,  # Taxes
-        13: 140,  # Final Amount
-        14: 140,  # Sub Total
-        15: 160,  # Transport / Freight
-        16: 150,  # Grand Total
-        17: 140,  # Vehicle Number
-        18: 160,  # Transporter Name
-        19: 180,  # Barcode Link
-        20: 170,  # Barcode ID
-        21: 200,  # Remarks
-        22: 160,  # Created At
-        23: 170,  # Created By
-        24: 160,  # Updated At
-        25: 170,  # Updated By
+        11: 140,  # Item Amount
+        12: 140,  # Taxable Amount
+        13: 190,  # Taxes
+        14: 160,  # Transport / Freight
+        15: 150,  # Grand Total
+        16: 140,  # Vehicle Number
+        17: 160,  # Transporter Name
+        18: 180,  # Barcode Link
+        19: 170,  # Barcode ID
+        20: 200,  # Remarks
+        21: 160,  # Created At
+        22: 170,  # Created By
+        23: 160,  # Updated At
+        24: 170,  # Updated By
     }
     MOVEMENTS_COL_WIDTHS = {
         0: 160, 1: 200, 2: 90, 3: 100, 4: 160, 5: 160,
@@ -207,8 +206,8 @@ class SheetsService:
                     "BILL INFO", "", "", "",
                     "PRODUCT DETAILS", "", "",
                     "QUANTITY / PACKAGING", "", "",
-                    "ITEM FINANCIALS", "", "", "",
-                    "BILL TOTALS", "", "",
+                    "ITEM FINANCIALS", "",
+                    "BILL TOTALS", "", "", "",
                     "TRANSPORT", "",
                     "SYSTEM META", "", "", "", "", "", ""
                 ]
@@ -281,7 +280,7 @@ class SheetsService:
 
         # ── 1.5 MERGE SUPER HEADERS (Stock Register) ──────────────────────────
         if title == "Stock Register":
-            super_spans = [(0, 4), (4, 7), (7, 10), (10, 14), (14, 17), (17, 19), (19, 26)]
+            super_spans = [(0, 4), (4, 7), (7, 10), (10, 12), (12, 16), (16, 18), (18, 25)]
             for start_col, end_col in super_spans:
                 requests.append({
                     "mergeCells": {
@@ -594,7 +593,7 @@ class SheetsService:
                         "booleanRule": {
                             "condition": {
                                 "type": "CUSTOM_FORMULA",
-                                "values": [{"userEnteredValue": f'=$U{frozen_rows+1}=""'}],
+                                "values": [{"userEnteredValue": f'=$T{frozen_rows+1}=""'}],
                             },
                             "format": {
                                 "backgroundColor": _rgb("out_move_bg"),
@@ -628,7 +627,7 @@ class SheetsService:
 
         # ── 11. NUMERIC COLUMNS — right-aligned ───────────────────────────────
         numeric_cols = {
-            "Stock Register":  [7, 9, 10, 11, 13, 14, 15, 16],
+            "Stock Register":  [7, 9, 10, 11, 12, 14, 15],
             "Stock Movements": [3],
             "Stock Summary":   [2, 4, 5],
         }.get(title, [])
@@ -657,7 +656,7 @@ class SheetsService:
 
         # ── 12. DATE COLUMNS — consistent formatting ──────────────────────────
         date_cols = {
-            "Stock Register":  [0, 22, 24],
+            "Stock Register":  [0, 21, 23],
             "Stock Movements": [0],
             "Stock Summary":   [6],
         }.get(title, [])
@@ -922,7 +921,14 @@ class SheetsService:
                 # Dynamic mapping for everything else
                 for col_name in self.BASE_SCHEMA:
                     if not row_data[h[col_name]]: # Only if not already set
-                        row_data[h[col_name]] = item.get(col_name) or header.get(col_name) or ""
+                        val = item.get(col_name) or header.get(col_name)
+                        if val is None and col_name == "Taxes (IGST/CGST/SGST)":
+                            val = header.get("Taxes") or item.get("Taxes")
+                            
+                        if isinstance(val, list):
+                            val = ", ".join([f"{t.get('label')}: {t.get('amount')}" for t in val if isinstance(t, dict)])
+                            
+                        row_data[h[col_name]] = val if val is not None else ""
                 
                 register_appends.append(row_data)
 

@@ -376,7 +376,12 @@ OUTPUT — Return ONLY this JSON. No explanation. No markdown fences.
     "Supplier GST": "...",
     "Vehicle Number": "...",
     "Transporter Name": "...",
-    "Sub Total": 0.0,
+    "Taxable Amount": 0.0,
+    "Taxes": [
+      { "label": "CGST", "amount": 0.0 },
+      { "label": "SGST", "amount": 0.0 },
+      { "label": "IGST", "amount": 0.0 }
+    ],
     "Transport / Freight": 0.0,
     "Grand Total": 0.0
   },
@@ -388,13 +393,7 @@ OUTPUT — Return ONLY this JSON. No explanation. No markdown fences.
       "Quantity Received": "...",
       "Unit": "...",
       "Number of Bags": "...",
-      "Rate per Unit": 0.0,
-      "Total Amount": 0.0,
-      "Taxes": [
-        { "label": "CGST", "amount": 0.0 },
-        { "label": "SGST", "amount": 0.0 },
-        { "label": "IGST", "amount": 0.0 }
-      ]
+      "Total Amount": 0.0
     }
   ]
 }
@@ -421,13 +420,13 @@ FIELD MAPPING — accept ANY of these label aliases
 
 ▸ Unit (UOM): UOM, Unit, Measure, MT, Metric Tonne, Tonnes, TO, T, KG, Kilograms, Kgs, PCS, Pieces, NOS, Number, BAG, Bags, G, GM, LTR, L, ML, CFT, CBM, SQM, SQFT, RMT, RM, SET, PAIR, BOX, CTN, ROLL, DRUM, CAN, BUNDLE, SHEET, PLATE, MTR, FT, INCH, MM, CM, TON, QUINTAL, QTL, PACKET, PKT, POUCH, UNIT, NUMBER, GROSS, DOZEN, DZ, CASE, PALLET, SLAB, COIL, BAR, ROD, PIPE, LENGTH, EACH, EA, PC... **CRITICAL**: Do not confuse MT (Metric Ton) with KG (Kilograms).
 
-▸ Sub Total: Total Taxable Value, Sub-Total, Net Weight Total Value, Total before Tax, Pre-Tax Total, Basic Total, Assessed Value Total, Amount Before Tax...
+▸ Taxable Amount: Total Taxable Value, Sub-Total, Net Weight Total Value, Total before Tax, Pre-Tax Total, Basic Total, Assessed Value Total, Amount Before Tax...
 
 ▸ Transport / Freight: Freight Rate, Transport Rate, Freight Rs/Uom, Rs/MT, Rs/KG, Delivery Rate, Shipping Rate. **CRITICAL**: Extract the per-unit RATE (e.g. 500/MT) as a number. Do NOT extract the total freight amount.
 
 ▸ Grand Total: Grand Total, Invoice Total, Total Payable, Net Amount, Bill Value, Total Amount (if it includes tax), Net Total, Gross Total, Final Total, Total Amount Payable...
 
-▸ Taxes (IGST/CGST/SGST and more): List all individual tax components (IGST, CGST, SGST, Cess) separately. 
+▸ Taxes (IGST/CGST/SGST and more): List all individual tax components (IGST, CGST, SGST, Cess) separately at the bill level. 
   Example: [{"label": "CGST", "amount": 12.50}, {"label": "SGST", "amount": 12.50}]
 
 ═══════════════════════════════════════
