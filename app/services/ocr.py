@@ -361,7 +361,9 @@ OUTPUT — Return ONLY this JSON. No explanation. No markdown fences.
     "Supplier Name": "...",
     "Supplier GST": "...",
     "Vehicle Number": "...",
-    "Transporter Name": "..."
+    "Transporter Name": "...",
+    "Transport / Freight": 0.0,
+    "Final Amount": 0.0
   },
   "items": [
     {
@@ -410,18 +412,21 @@ FIELD MAPPING — accept ANY of these label aliases
 
 ▸ Total Amount: Amount, Taxable Amount, Taxable Value, Sub Total, Value, Amount before Tax, Basic Amount, Gross Amount, Pre-Tax Amount, Assessable Value, Taxable Base, Total Value...
 
+▸ Transport / Freight: Freight, Transport, Transportation, Delivery Charges, Shipping, Cartage, Loading Charges, Freight Amount, Transport Amount, Handling Charges, Forwarding Charges...
+
+▸ Final Amount: Grand Total, Invoice Total, Total Payable, Net Amount, Bill Value, Total Amount (if it includes tax), Net Total, Gross Total, Final Total...
+
 ▸ Taxes: List all individual tax components (IGST, CGST, SGST, Cess) separately. 
   Example: [{"label": "CGST", "amount": 12.50}, {"label": "SGST", "amount": 12.50}]
 
 ═══════════════════════════════════════
 EXTRACTION_RULES
 ═══════════════════════════════════════
-1. NO FINAL AMOUNT EXTRACTION: Do not return a Final Amount field in the JSON. Extract Total Amount and individual Taxes only.
-2. ENHANCED TAX EXTRACTION: Individual tax components (CGST, SGST, IGST) are MANDATORY. Look in the summary table at the bottom if they are not in the line items.
-3. CHARACTER ACCURACY: Be extremely careful with numbers. '8' and '3' look similar; verify against calculations (Total = Qty * Rate). 
-4. NO FREIGHT/REMARKS: Do not extract Transport/Freight or Remarks. These are for user input only.
-5. CLEAN NUMBERS: Strip currency symbols (₹, Rs) and remove commas.
-6. DATE NORMALISATION: Convert to YYYY-MM-DD.
+1. ENHANCED TAX EXTRACTION: Individual tax components (CGST, SGST, IGST) are MANDATORY. Look in the summary table at the bottom if they are not in the line items.
+2. CHARACTER ACCURACY: Be extremely careful with numbers. '8' and '3' look similar; verify against calculations (Total = Qty * Rate). 
+3. NO REMARKS: Do not extract Remarks. This is for manual user input only.
+4. CLEAN NUMBERS: Strip currency symbols (₹, Rs) and remove commas.
+5. DATE NORMALISATION: Convert to YYYY-MM-DD.
 """
 
 ocr_service = OCRService()

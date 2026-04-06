@@ -53,7 +53,7 @@ class SheetsService:
     BASE_SCHEMA = [
         "Product Name", "Product Code", "Model Name", "Quantity Received", "Unit", "Barcode Link",
         "Supplier Name", "Date", "Invoice Number", "Supplier GST", "Batch Number",
-        "Number of Bags", "Rate per Unit", "Total Amount",
+        "Number of Bags", "Rate per Unit", "Total Amount", "Transport / Freight",
         "Taxes (IGST/CGST/SGST)", "Final Amount", "Vehicle Number", "Transporter Name",
         "Remarks", "Barcode ID", "Created At", "Created By", "Updated At", "Updated By",
     ]
@@ -82,16 +82,17 @@ class SheetsService:
         11: 110,  # Number of Bags
         12: 130,  # Rate per Unit
         13: 140,  # Total Amount
-        14: 190,  # Taxes
-        15: 140,  # Final Amount
-        16: 140,  # Vehicle Number
-        17: 160,  # Transporter Name
-        18: 200,  # Remarks
-        19: 170,  # Barcode ID
-        20: 160,  # Created At
-        21: 170,  # Created By
-        22: 160,  # Updated At
-        23: 170,  # Updated By
+        14: 160,  # Transport / Freight
+        15: 190,  # Taxes
+        16: 140,  # Final Amount
+        17: 140,  # Vehicle Number
+        18: 160,  # Transporter Name
+        19: 200,  # Remarks
+        20: 170,  # Barcode ID
+        21: 160,  # Created At
+        22: 170,  # Created By
+        23: 160,  # Updated At
+        24: 170,  # Updated By
     }
     MOVEMENTS_COL_WIDTHS = {
         0: 160, 1: 200, 2: 90, 3: 100, 4: 160, 5: 160,
@@ -582,7 +583,7 @@ class SheetsService:
 
         # ── 11. NUMERIC COLUMNS — right-aligned ───────────────────────────────
         numeric_cols = {
-            "Stock Register":  [2, 10, 11, 12, 13, 14],
+            "Stock Register":  [2, 10, 11, 12, 13, 14, 15],
             "Stock Movements": [3],
             "Stock Summary":   [2, 4, 5],
         }.get(title, [])
@@ -611,7 +612,7 @@ class SheetsService:
 
         # ── 12. DATE COLUMNS — consistent formatting ──────────────────────────
         date_cols = {
-            "Stock Register":  [6, 19, 21],
+            "Stock Register":  [6, 20, 22],
             "Stock Movements": [0],
             "Stock Summary":   [6],
         }.get(title, [])
