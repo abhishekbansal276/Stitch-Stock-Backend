@@ -28,4 +28,4 @@ EXPOSE 8000
 
 # Command to run the application using Gunicorn for production
 # Render will provide the $PORT environment variable
-CMD gunicorn -w 4 -k uvicorn.workers.UvicornWorker app.main:app --bind 0.0.0.0:$PORT
+CMD gunicorn -w 4 -k uvicorn.workers.UvicornWorker app.main:app --bind 0.0.0.0:$PORT --timeout 120

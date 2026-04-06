@@ -65,7 +65,7 @@ class OCRService:
     def _pick_groq_model(self) -> str:
         try:
             available_models = self.groq_client.models.list()
-            available_ids = {m.id for m in available_models}
+            available_ids = {m.id for m in available_models.data}
             for p in self.preferred_groq:
                 if p in available_ids:
                     return p
