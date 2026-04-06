@@ -10,6 +10,8 @@ from typing import List, Dict
 
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
+from google.cloud.firestore_v1.base_query import FieldFilter
+from google.auth import exceptions as auth_exceptions
 from app.services.firebase import db, clean_private_key, BASE_DIR
 
 
@@ -116,13 +118,6 @@ class SheetsService:
         try:
             metadata = self.service.spreadsheets().get(
                 spreadsheetId=self.spreadsheet_id).execute()
-            existing = {
-                s["properties"]["title"]: s["properties"]["sheetId"]
-                for s in metadata.get("sheets", [])
-            }
-            self._ensure_sheet("Stock Register",  self.BASE_SCHEMA,      existing)
-            self._ensure_sheet("Stock Movements", self.MOVEMENTS_SCHEMA, existing)
-            self._ensure_sheet("Stock Summary",   self.SUMMARY_SCHEMA,   existing)
 
             self._cached_header_map = {n: i for i, n in enumerate(self.BASE_SCHEMA)}
             self._cache_expiry = time.time() + 300
