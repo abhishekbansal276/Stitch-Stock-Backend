@@ -37,6 +37,7 @@ class OCRService:
             ]
             self.gemini_model = self._pick_gemini_model()
             logger.info(f"OCRService: Gemini initialized with model: {self.gemini_model}")
+            print(f"✅ GEMINI ACTIVE: Using Model '{self.gemini_model}'")
         else:
             logger.warning("OCRService: GEMINI_API_KEY not found. Gemini features disabled.")
             self.gemini_client = None
@@ -145,6 +146,7 @@ class OCRService:
         for attempt in range(max_retries):
             try:
                 logger.info(f"OCRService: Requesting Gemini Vision [{self.gemini_model}] (Attempt {attempt+1})")
+                print(f"🤖 GEMINI REQUEST: Model={self.gemini_model}, Attempt={attempt+1}")
                 response = self.gemini_client.models.generate_content(
                     model=self.gemini_model,
                     contents=[
@@ -382,7 +384,6 @@ OUTPUT — Return ONLY this JSON. No explanation. No markdown fences.
     {
       "Product Code": "...",
       "Product Name": "...",
-      "Model Name": "...",
       "Batch Number": "...",
       "Quantity Received": "...",
       "Unit": "...",

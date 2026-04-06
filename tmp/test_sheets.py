@@ -22,7 +22,6 @@ def test():
     # Verify key column positions
     h = {n: i for i, n in enumerate(sheets_service.BASE_SCHEMA)}
     print(f"Product Name: {h['Product Name']}")
-    print(f"Model Name: {h['Model Name']}")
     print(f"Barcode ID: {h['Barcode ID']}")
 
 if __name__ == "__main__":

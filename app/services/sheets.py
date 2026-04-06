@@ -51,11 +51,20 @@ def _rgb(key: str) -> dict:
 class SheetsService:
     # ── SCHEMA DEFINITIONS ────────────────────────────────────────────────────
     BASE_SCHEMA = [
-        "Product Name", "Product Code", "Model Name", "Quantity Received", "Unit", "Barcode Link",
-        "Supplier Name", "Date", "Invoice Number", "Supplier GST", "Batch Number",
-        "Number of Bags", "Rate per Unit", "Total Amount", "Sub Total", "Transport / Freight",
-        "Taxes (IGST/CGST/SGST)", "Grand Total", "Vehicle Number", "Transporter Name",
-        "Remarks", "Barcode ID", "Created At", "Created By", "Updated At", "Updated By",
+        # 1. Bill Info
+        "Date", "Supplier Name", "Invoice Number", "Supplier GST",
+        # 2. Product Details
+        "Product Name", "Product Code", "Batch Number",
+        # 3. Quantity / Packaging
+        "Quantity Received", "Unit", "Number of Bags",
+        # 4. Item Financials
+        "Rate per Unit", "Total Amount", "Taxes (IGST/CGST/SGST)", "Final Amount",
+        # 5. Bill Totals
+        "Sub Total", "Transport / Freight", "Grand Total",
+        # 6. Transport
+        "Vehicle Number", "Transporter Name",
+        # 7. System Meta
+        "Barcode Link", "Barcode ID", "Remarks", "Created At", "Created By", "Updated At", "Updated By",
     ]
     MOVEMENTS_SCHEMA = [
         "Timestamp", "Product Name", "Type", "Quantity", "Warehouse", "Location", "User",
@@ -68,28 +77,28 @@ class SheetsService:
 
     # Column widths (pixels) — tuned per sheet for readability
     REGISTER_COL_WIDTHS = {
-        0: 220,   # Product Name
-        1: 130,   # Product Code
-        2: 150,   # Model Name
-        3: 130,   # Quantity Received
-        4: 80,    # Unit
-        5: 180,   # Barcode Link
-        6: 160,   # Supplier Name
-        7: 110,   # Date
-        8: 150,   # Invoice Number
-        9: 140,   # Supplier GST
-        10: 130,  # Batch Number
-        11: 110,  # Number of Bags
-        12: 130,  # Rate per Unit
-        13: 140,  # Total Amount
+        0: 110,   # Date
+        1: 160,   # Supplier Name
+        2: 150,   # Invoice Number
+        3: 140,   # Supplier GST
+        4: 220,   # Product Name
+        5: 130,   # Product Code
+        6: 130,   # Batch Number
+        7: 130,   # Quantity Received
+        8: 80,    # Unit
+        9: 110,   # Number of Bags
+        10: 130,  # Rate per Unit
+        11: 140,  # Total Amount
+        12: 190,  # Taxes
+        13: 140,  # Final Amount
         14: 140,  # Sub Total
         15: 160,  # Transport / Freight
-        16: 190,  # Taxes
-        17: 150,  # Grand Total
-        18: 140,  # Vehicle Number
-        19: 160,  # Transporter Name
-        20: 200,  # Remarks
-        21: 170,  # Barcode ID
+        16: 150,  # Grand Total
+        17: 140,  # Vehicle Number
+        18: 160,  # Transporter Name
+        19: 180,  # Barcode Link
+        20: 170,  # Barcode ID
+        21: 200,  # Remarks
         22: 160,  # Created At
         23: 170,  # Created By
         24: 160,  # Updated At
@@ -173,8 +182,9 @@ class SheetsService:
                 if title == "Stock Summary":
                     self._add_chart(sheet_id)
             else:
+                check_range = f"{title}!2:2" if title == "Stock Register" else f"{title}!1:1"
                 result = self.service.spreadsheets().values().get(
-                    spreadsheetId=self.spreadsheet_id, range=f"{title}!1:1"
+                    spreadsheetId=self.spreadsheet_id, range=check_range
                 ).execute()
                 current_headers = result.get("values", [[]])[0]
                 if not current_headers:
@@ -192,11 +202,27 @@ class SheetsService:
 
     def _write_headers(self, title: str, schema: List[str]):
         try:
+            if title == "Stock Register":
+                super_row = [
+                    "BILL INFO", "", "", "",
+                    "PRODUCT DETAILS", "", "",
+                    "QUANTITY / PACKAGING", "", "",
+                    "ITEM FINANCIALS", "", "", "",
+                    "BILL TOTALS", "", "",
+                    "TRANSPORT", "",
+                    "SYSTEM META", "", "", "", "", "", ""
+                ]
+                values = [super_row, schema]
+                range_target = f"{title}!1:2"
+            else:
+                values = [schema]
+                range_target = f"{title}!1:1"
+                
             self.service.spreadsheets().values().update(
                 spreadsheetId=self.spreadsheet_id,
-                range=f"{title}!1:1",
+                range=range_target,
                 valueInputOption="RAW",
-                body={"values": [schema]},
+                body={"values": values},
             ).execute()
         except Exception as e:
             print(f"Write headers error for '{title}': {e}")
@@ -222,16 +248,19 @@ class SheetsService:
             tab_color  = {"red": 0.180, "green": 0.380, "blue": 0.620}
             col_widths = self.REGISTER_COL_WIDTHS
             freeze_cols = 2
+            frozen_rows = 2
         elif title == "Stock Movements":
             hdr_color  = _rgb("movements_header")
             tab_color  = {"red": 0.067, "green": 0.490, "blue": 0.440}
             col_widths = self.MOVEMENTS_COL_WIDTHS
             freeze_cols = 1
+            frozen_rows = 1
         else:  # Stock Summary
             hdr_color  = _rgb("summary_header")
             tab_color  = {"red": 0.380, "green": 0.200, "blue": 0.600}
             col_widths = self.SUMMARY_COL_WIDTHS
             freeze_cols = 2
+            frozen_rows = 1
 
         num_cols = len(schema)
 
@@ -242,7 +271,7 @@ class SheetsService:
                     "sheetId": sheet_id,
                     "tabColor": tab_color,
                     "gridProperties": {
-                        "frozenRowCount": 1,
+                        "frozenRowCount": frozen_rows,
                         "frozenColumnCount": freeze_cols,
                     },
                 },
@@ -250,12 +279,27 @@ class SheetsService:
             }
         })
 
+        # ── 1.5 MERGE SUPER HEADERS (Stock Register) ──────────────────────────
+        if title == "Stock Register":
+            super_spans = [(0, 4), (4, 7), (7, 10), (10, 14), (14, 17), (17, 19), (19, 26)]
+            for start_col, end_col in super_spans:
+                requests.append({
+                    "mergeCells": {
+                        "range": {
+                            "sheetId": sheet_id,
+                            "startRowIndex": 0, "endRowIndex": 1,
+                            "startColumnIndex": start_col, "endColumnIndex": end_col
+                        },
+                        "mergeType": "MERGE_ALL"
+                    }
+                })
+
         # ── 2. HEADER ROW STYLE ───────────────────────────────────────────────
         requests.append({
             "repeatCell": {
                 "range": {
                     "sheetId": sheet_id,
-                    "startRowIndex": 0, "endRowIndex": 1,
+                    "startRowIndex": 0, "endRowIndex": frozen_rows,
                     "startColumnIndex": 0, "endColumnIndex": num_cols,
                 },
                 "cell": {
@@ -282,7 +326,7 @@ class SheetsService:
         requests.append({
             "updateDimensionProperties": {
                 "range": {"sheetId": sheet_id, "dimension": "ROWS",
-                          "startIndex": 0, "endIndex": 1},
+                          "startIndex": 0, "endIndex": frozen_rows},
                 "properties": {"pixelSize": 38},
                 "fields": "pixelSize",
             }
@@ -293,7 +337,7 @@ class SheetsService:
             "repeatCell": {
                 "range": {
                     "sheetId": sheet_id,
-                    "startRowIndex": 1,
+                    "startRowIndex": frozen_rows,
                     "startColumnIndex": 0, "endColumnIndex": num_cols,
                 },
                 "cell": {
@@ -315,7 +359,7 @@ class SheetsService:
         requests.append({
             "updateDimensionProperties": {
                 "range": {"sheetId": sheet_id, "dimension": "ROWS",
-                          "startIndex": 1, "endIndex": 1000},
+                          "startIndex": frozen_rows, "endIndex": 1000},
                 "properties": {"pixelSize": 26},
                 "fields": "pixelSize",
             }
@@ -337,7 +381,7 @@ class SheetsService:
         requests.append({
             "addConditionalFormatRule": {
                 "rule": {
-                    "ranges": [{"sheetId": sheet_id, "startRowIndex": 1}],
+                    "ranges": [{"sheetId": sheet_id, "startRowIndex": frozen_rows}],
                     "booleanRule": {
                         "condition": {
                             "type": "CUSTOM_FORMULA",
@@ -363,7 +407,7 @@ class SheetsService:
             "updateBorders": {
                 "range": {
                     "sheetId": sheet_id,
-                    "startRowIndex": 0, "endRowIndex": 1,
+                    "startRowIndex": 0, "endRowIndex": frozen_rows,
                     "startColumnIndex": 0, "endColumnIndex": num_cols,
                 },
                 "top":    solid_medium,
@@ -382,7 +426,7 @@ class SheetsService:
             "updateBorders": {
                 "range": {
                     "sheetId": sheet_id,
-                    "startRowIndex": 1,
+                    "startRowIndex": frozen_rows,
                     "startColumnIndex": 0, "endColumnIndex": num_cols,
                 },
                 "innerVertical": solid_thin,
@@ -544,13 +588,13 @@ class SheetsService:
                 "addConditionalFormatRule": {
                     "rule": {
                         "ranges": [{
-                            "sheetId": sheet_id, "startRowIndex": 1,
+                            "sheetId": sheet_id, "startRowIndex": frozen_rows,
                             "startColumnIndex": 0, "endColumnIndex": num_cols,
                         }],
                         "booleanRule": {
                             "condition": {
                                 "type": "CUSTOM_FORMULA",
-                                "values": [{"userEnteredValue": '=$T2=""'}],
+                                "values": [{"userEnteredValue": f'=$U{frozen_rows+1}=""'}],
                             },
                             "format": {
                                 "backgroundColor": _rgb("out_move_bg"),
@@ -566,7 +610,7 @@ class SheetsService:
             "repeatCell": {
                 "range": {
                     "sheetId": sheet_id,
-                    "startRowIndex": 1,
+                    "startRowIndex": frozen_rows,
                     "startColumnIndex": 0, "endColumnIndex": 1,
                 },
                 "cell": {
@@ -584,7 +628,7 @@ class SheetsService:
 
         # ── 11. NUMERIC COLUMNS — right-aligned ───────────────────────────────
         numeric_cols = {
-            "Stock Register":  [2, 10, 11, 12, 13, 14, 15, 17],
+            "Stock Register":  [7, 9, 10, 11, 13, 14, 15, 16],
             "Stock Movements": [3],
             "Stock Summary":   [2, 4, 5],
         }.get(title, [])
@@ -595,7 +639,7 @@ class SheetsService:
                     "repeatCell": {
                         "range": {
                             "sheetId": sheet_id,
-                            "startRowIndex": 1,
+                            "startRowIndex": frozen_rows,
                             "startColumnIndex": col, "endColumnIndex": col + 1,
                         },
                         "cell": {
@@ -613,7 +657,7 @@ class SheetsService:
 
         # ── 12. DATE COLUMNS — consistent formatting ──────────────────────────
         date_cols = {
-            "Stock Register":  [7, 22, 24],
+            "Stock Register":  [0, 22, 24],
             "Stock Movements": [0],
             "Stock Summary":   [6],
         }.get(title, [])
@@ -624,7 +668,7 @@ class SheetsService:
                     "repeatCell": {
                         "range": {
                             "sheetId": sheet_id,
-                            "startRowIndex": 1,
+                            "startRowIndex": frozen_rows,
                             "startColumnIndex": col, "endColumnIndex": col + 1,
                         },
                         "cell": {
@@ -865,7 +909,6 @@ class SheetsService:
                 # Primary fields
                 row_data[h["Product Name"]] = name
                 row_data[h["Product Code"]] = code
-                row_data[h["Model Name"]]   = item.get("Model Name") or item.get("mname") or header.get("Model Name") or ""
                 row_data[h["Quantity Received"]] = str(qty)
                 row_data[h["Unit"]] = unit
                 
@@ -1024,8 +1067,7 @@ class SheetsService:
                         "quantity_remaining": self._to_float(row[h["Quantity Received"]]),
                         "unit": row[h["Unit"]],
                         "supplier_name": row[h["Supplier Name"]],
-                        "product_code": row[h["Product Code"]],
-                        "model_name": row[h["Model Name"]] if len(row) > h["Model Name"] else ""
+                        "product_code": row[h["Product Code"]]
                     }
         except Exception as e:
             print(f"Get stock item error: {e}")
