@@ -236,6 +236,18 @@ class OCRService:
             data = json.loads(raw)
             if "items" not in data:
                 data["items"] = []
+            
+            # --- ELITE FIX: Calculate Final Amount Locally ---
+            for item in data["items"]:
+                total_amt = self._to_float(item.get("Total Amount", 0))
+                taxes = item.get("Taxes", [])
+                if not isinstance(taxes, list):
+                    taxes = []
+                
+                tax_sum = sum(self._to_float(t.get("amount", 0)) for t in taxes if isinstance(t, dict))
+                item["Final Amount"] = round(total_amt + tax_sum, 2)
+                item["Taxes"] = taxes # Ensure it stays a list
+            
             data["items"] = self._consolidate(data.get("items", []))
             logger.info(f"OCRService: Extraction complete. Found {len(data['items'])} line items.")
             return data
@@ -259,6 +271,10 @@ class OCRService:
                 base["Final Amount"] = (
                     self._to_float(base.get("Final Amount"))
                     + self._to_float(item.get("Final Amount")))
+                
+                # --- NEW: Merge Tax Lists ---
+                base["Taxes"] = self._merge_taxes(base.get("Taxes", []), item.get("Taxes", []))
+
                 if not base.get("Unit") or base.get("Unit") == "PCS":
                     base["Unit"] = item.get("Unit") or base.get("Unit")
                 if item.get("Batch Number") and item["Batch Number"] not in str(base.get("Batch Number", "")):
@@ -266,6 +282,17 @@ class OCRService:
             else:
                 merged[key] = dict(item)
         return list(merged.values())
+
+    def _merge_taxes(self, taxes1: List[Dict], taxes2: List[Dict]) -> List[Dict]:
+        """Sums amounts for taxes with the same label."""
+        tax_map: Dict[str, float] = {}
+        for t in taxes1 + taxes2:
+            if isinstance(t, dict):
+                label = str(t.get("label", "Tax")).strip().upper()
+                amt = self._to_float(t.get("amount", 0))
+                tax_map[label] = tax_map.get(label, 0.0) + amt
+        
+        return [{"label": label, "amount": round(val, 2)} for label, val in tax_map.items()]
 
     def _to_float(self, val) -> float:
         if isinstance(val, (int, float)):
@@ -309,8 +336,10 @@ OUTPUT — Return ONLY this JSON. No explanation. No markdown fences.
       "Number of Bags": "...",
       "Rate per Unit": 0.0,
       "Total Amount": 0.0,
-      "Taxes (IGST/CGST/SGST)": "...",
-      "Final Amount": 0.0,
+      "Taxes": [
+        { "label": "CGST", "amount": 0.0 },
+        { "label": "SGST", "amount": 0.0 }
+      ],
       "Remarks": "..."
     }
   ]
@@ -320,31 +349,44 @@ OUTPUT — Return ONLY this JSON. No explanation. No markdown fences.
 FIELD MAPPING — accept ANY of these label aliases
 ═══════════════════════════════════════════════
 
-▸ Date: Date, Dated, Bill Date, Date of Issue, Doc Date, Invoice Date...
-▸ Invoice Number: Invoice No, Bill No, Bill Number, Serial No, Ref No, Challan No, D.O. No, Tax Invoice No...
-▸ Supplier Name: Supplier, Sold By, Seller, From, Consignor, Company...
-▸ Supplier GST: GST No, GSTIN, GST Number, Tax ID, TIN No...
-▸ Vehicle Number: Vehicle No, Veh. No, Truck No, RC No, Registration Number...
-▸ Transport / Freight: Freight, Transport Charges, Cartage, Delivery Charges...
-▸ Product Code: Product Code, Item Code, Part No, SKU, HSN, Article No, Model No...
-▸ Product Name: Description, Description of Goods, Product Name, Material...
-▸ Quantity Received: Quantity, Qty, Qty Received, Received Qty, Nos, Pcs...
-▸ Unit: UOM, Unit, Measure (MT, TO, T, KG, PCS, NOS, BAG)...
-▸ Number of Bags: No. of Bags, Bags, Bag Count, Packs, Cartons...
-▸ Rate per Unit: Rate, Price, Unit Price, Price/UOM, Basic Rate...
-▸ Total Amount: Amount, Taxable Amount, Taxable Value, Sub Total, Value, Amount before Tax...
-▸ Taxes (IGST/CGST/SGST): IGST, CGST, SGST, GST, Tax Amount (Sum all components)...
-▸ Final Amount: Final Amount, Grand Total, Total Amount, Invoice Total, Net Payable, Net Amount, Total Value, Balance Due, ROUND OFF TOTAL...
-▸ Remarks: Remarks, Notes, Handwritten or stamped annotations.
+▸ Date: Date, Dated, Bill Date, Date of Issue, Doc Date, Invoice Date, Voucher Date, Entry Date, Transaction Date, Challan Date, GRN Date, PO Date, Delivery Date, Receipt Date, Posting Date, Value Date, Tax Invoice Date, Dt, Dte, Date of Supply, Date of Delivery, Dispatch Date, Shipment Date, Order Date, Booking Date, Created Date, Due Date, Expiry Date, Valid Till...
+
+▸ Invoice Number: Invoice No, Bill No, Bill Number, Serial No, Ref No, Challan No, D.O. No, Tax Invoice No, Invoice #, Bill #, Voucher No, Voucher Number, Document No, Doc No, Doc Number, GRN No, GRN Number, PO No, PO Number, Order No, Order Number, Delivery Note No, DN No, LR No, Docket No, AWB No, E-Way Bill No, E-Way No, Receipt No, Memo No, Credit Note No, Debit Note No, Note No, Consignment No, Parcel No, Slip No, Challan Number, Ref Number, Reference No, Reference Number, Transaction No, Transaction ID, Indent No, Gate Entry No, Inward No, Material Receipt No, MRN No, SRN No...
+
+▸ Supplier Name: Supplier, Sold By, Seller, From, Consignor, Company, Vendor, Vendor Name, Party Name, Party, Manufacturer, Distributor, Dealer, Trader, Firm Name, Business Name, Billed By, Dispatched By, Shipped By, Forwarded By, Agent, Broker, Mill Name, Factory Name, Source, Principal, Exporter, Importer, Proprietor, Organization, Entity Name, Supplier / Vendor, Name of Supplier, Name of Seller, Creditor, Remitter, Issuer...
+
+▸ Supplier GST: GST No, GSTIN, GST Number, Tax ID, TIN No, TIN, VAT No, VAT Number, Service Tax No, CIN No, PAN No, PAN Number, GSTIN of Supplier, Seller GSTIN, Vendor GSTIN, Party GSTIN, Tax Registration No, Tax Reg No, GST Reg No, GST Registration Number, CST No, LST No, Excise No, IEC Code, FSSAI No, Import Export Code, Udyam No, MSME No...
+
+▸ Vehicle Number: Vehicle No, Veh. No, Truck No, RC No, Registration Number, Reg No, Transport No, Lorry No, Lorry Number, Truck Number, Tempo No, Vehicle Registration, Vehicle Reg No, Tractor No, Tanker No, Container No, Fleet No, Conveyance No, Carrier No, Car No, Auto No, Van No, LCV No, HCV No, Transport Vehicle No...
+
+▸ Transport / Freight: Freight, Transport Charges, Cartage, Delivery Charges, Freight Charges, Carriage, Carriage Inward, Carriage Outward, Forwarding Charges, Handling Charges, Loading Charges, Unloading Charges, Logistics Charges, Shipping Charges, Courier Charges, Packing & Forwarding, P&F Charges, Octroi, Entry Tax, Toll Charges, Transit Charges, Conveyance Charges, Drayage, Porterage, Haulage, Godown Charges, Demurrage, Transportation Cost, Freight & Cartage, LR Charges, Dispatch Charges...
+
+▸ Product Code: Product Code, Item Code, Part No, SKU, HSN, Article No, Model No, Part Number, Item No, Item Number, Material Code, Material No, Cat No, Catalogue No, Catalogue Number, Stock Code, Stock No, Reference Code, Ref Code, Product ID, Item ID, BOM Code, Component Code, HSN Code, SAC Code, HSN/SAC, UPC Code, EAN Code, ASIN, Internal Code, System Code, Drawing No, Specification No, Grade Code, Variant Code...
+
+▸ Product Name: Description, Description of Goods, Product Name, Material, Item Description, Item Name, Product Description, Goods Description, Particulars, Commodity, Article, Material Description, Name of Product, Name of Goods, Name of Item, Material Name, Commodity Name, Subject, Nature of Goods, Details, Specification, Product Details, Item Particulars, Goods, Stock Item, Service Description, Nature of Supply, Category, Product Title, Brand Name, Short Description, Full Description...
+
+▸ Quantity Received: Quantity, Qty, Qty Received, Received Qty, Nos, Pcs, Pieces, Count, Number, No. of Units, Units Received, Total Qty, Dispatched Qty, Shipped Qty, Delivered Qty, Accepted Qty, Inspected Qty, Actual Qty, GRN Qty, Inward Qty, Received Quantity, Net Qty, Gross Qty, Billed Qty, Ordered Qty, Supply Qty, Qty Supplied, Qty Accepted, Qty Delivered, Volume, Amount of Goods...
+
+▸ Unit: UOM, Unit, Measure, MT, TO, T, KG, PCS, NOS, BAG, G, GM, LTR, L, ML, CFT, CBM, SQM, SQFT, RMT, RM, SET, PAIR, BOX, CTN, ROLL, DRUM, CAN, BUNDLE, SHEET, PLATE, MTR, FT, INCH, MM, CM, TON, QUINTAL, QTL, PACKET, PKT, POUCH, UNIT, NUMBER, GROSS, DOZEN, DZ, CASE, PALLET, SLAB, COIL, BAR, ROD, PIPE, LENGTH, EACH, EA, PC...
+
+▸ Number of Bags: No. of Bags, Bags, Bag Count, Packs, Cartons, No. of Packs, Pack Count, No. of Cartons, Carton Count, No. of Bundles, Bundles, No. of Boxes, Boxes, No. of Drums, Drums, No. of Packets, Packets, No. of Rolls, Rolls, No. of Cases, Cases, No. of Pallets, Pallets, No. of Pieces, Bundle Count, Box Count, Sacks, No. of Sacks, Pouches, No. of Pouches, Lots, No. of Lots, Containers, Crates, No. of Crates, Bales, No. of Bales, Cans, Tins, Nos of Pkg, Pkg Count, Total Packages, Total Packs...
+
+▸ Rate per Unit: Rate, Price, Unit Price, Price/UOM, Basic Rate, Rate per Kg, Rate per MT, Rate per Bag, Rate per Piece, Rate per Unit, Rate per Ltr, Unit Rate, Base Price, Basic Price, List Price, MRP, Selling Price, Purchase Price, Cost Price, Per Unit Cost, Price per Unit, Price per Piece, Price per Kg, Ex-Factory Rate, Ex-Works Rate, Landing Rate, Net Rate, Agreed Rate, Contract Rate, Standard Rate, Market Rate, Quote Rate, Quoted Price, Offer Rate, Rate (Excl. Tax), Rate (Incl. Tax)...
+
+▸ Total Amount: Amount, Taxable Amount, Taxable Value, Sub Total, Value, Amount before Tax, Basic Amount, Gross Amount, Pre-Tax Amount, Assessable Value, Taxable Base, Total Value, Chargeable Amount, Billed Amount, Invoice Amount, Merchandise Value, Commodity Value, Goods Value, Product Value, Line Total, Line Amount, Net Value, Subtotal, Total Before Tax, Total Before GST, Amount (Excl. GST), Ex-Tax Amount, Before Tax Total, Tax Base Amount, Material Value, Supply Value...
+
+▸ Taxes: List all individual tax components (IGST, CGST, SGST, Cess) separately. 
+  Example: [{"label": "CGST", "amount": 12.50}, {"label": "SGST", "amount": 12.50}]
+
+▸ Remarks: Remarks, Notes, Handwritten or stamped annotations, Comments, Observations, Narration, Description, Additional Notes, Special Instructions, Note, Memo, Annotation, Instructions, Terms, Conditions, Terms & Conditions, Delivery Terms, Payment Terms, Special Notes, Additional Comments, Internal Notes, Buyer Notes, Seller Notes, Dispatch Remarks, Quality Remarks, Inspection Notes, QC Remarks, Return Remarks, Rejection Remarks, Shortage Remarks, Damage Remarks, Excess Remarks, GRN Remarks, PO Remarks, Adjustment Notes, Disclaimer, Declaration, Clarification, Free Text, Other Details, Extra Info, Addendum...
 
 ═══════════════════════════════════════
 EXTRACTION RULES
 ═══════════════════════════════════════
-1. SCAN THE ENTIRE DOCUMENT: Final Amount / Grand Total is almost always at the BOTTOM footer.
-2. AMIGUOUS FIELDS: If multiple totals exist, use the one labeled 'Grand Total' or 'Payable'.
-3. NO PLACEHOLDERS: Use null if genuinely missing.
-4. CLEAN NUMBERS: Strip currency symbols (₹, Rs) and remove commas. (e.g. "1,234.00" -> 1234.00).
-5. DATE NORMALISATION: Convert to YYYY-MM-DD.
+1. NO FINAL AMOUNT EXTRACTION: Do not return a Final Amount field in the JSON. Extract Total Amount and individual Taxes only.
+2. SCAN THE ENTIRE DOCUMENT: Taxes are often listed at the line item level OR in the summary section.
+3. CLEAN NUMBERS: Strip currency symbols (₹, Rs) and remove commas. (e.g. "1,234.00" -> 1234.00).
+4. DATE NORMALISATION: Convert to YYYY-MM-DD.
 """
 
 ocr_service = OCRService()
