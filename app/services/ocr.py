@@ -392,7 +392,8 @@ OUTPUT — Return ONLY this JSON. No explanation. No markdown fences.
       "Total Amount": 0.0,
       "Taxes": [
         { "label": "CGST", "amount": 0.0 },
-        { "label": "SGST", "amount": 0.0 }
+        { "label": "SGST", "amount": 0.0 },
+        { "label": "IGST", "amount": 0.0 }
       ]
     }
   ]
@@ -433,9 +434,9 @@ FIELD MAPPING — accept ANY of these label aliases
 EXTRACTION_RULES
 ═══════════════════════════════════════
 1. STRICT JSON OUTPUT: Return ONLY valid JSON. No scratchpad, no explanations, no math operations inside the JSON values.
-2. ENHANCED TAX EXTRACTION: Individual tax components (CGST, SGST, IGST) are MANDATORY. Look in the summary table at the bottom if they are not in the line items.
+2. ENHANCED TAX EXTRACTION: Individual tax components (CGST, SGST, IGST) are MANDATORY. Look in the summary table at the bottom if they are not in the line items. **CRITICAL: DO NOT double-count IGST or any other taxes. Extract the exact tax amount only once per item/bill.**
 3. CHARACTER ACCURACY: Be extremely careful with numbers. '8' and '3' look similar; verify against calculations (Total = Qty * Rate). 
-4. UNIT (UOM) ACCURACY: Be very precise with Units. Common units are MT (Metric Ton), KG, NOS, BAG, PCS. If the unit is MT, ensure it is not extracted as KG. Check the rate per unit to confirm (e.g. if rate is ~1,00,000, unit is likely MT not KG).
+4. UNIT (UOM) ACCURACY: Be very precise with Units. Look specifically in columns labeled "UOM", "Unit", or "Alias". If the extracted value looks like "To", "Ton", or "Tones", normalize it to "MT" (Metric Tonnes). Do not confuse MT with KG.
 5. FREIGHT RATE EXTRACTION: You MUST extract the the total freight amount payable into the "Transport / Freight" field, NOT the Freight RATE (Rs/UOM, Rs/MT, Rs/KG).
 6. NO REMARKS: Do not extract Remarks. This is for manual user input only.
 7. CLEAN NUMBERS: Strip currency symbols (₹, Rs) and remove commas.
