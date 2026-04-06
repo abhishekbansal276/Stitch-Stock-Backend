@@ -1,43 +1,46 @@
 import os
-import easyocr
-import numpy as np
+import pytesseract
 from PIL import Image
 import io
+import shutil
 
 class LocalOCRService:
     def __init__(self):
-        self.reader = None
+        self.is_ready = False
         self._initialize_on_demand()
 
     def _initialize_on_demand(self):
-        """Lazy load the reader to save memory during startup."""
-        if self.reader is None:
-            try:
-                print("LocalOCRService: Initializing EasyOCR Reader (English)...")
-                # downloads models on first use (~500MB)
-                self.reader = easyocr.Reader(['en'], gpu=False) 
-            except Exception as e:
-                print(f"LocalOCRService: Initialization failed: {e}")
+        """Check if Tesseract is installed and configured."""
+        if not self.is_ready:
+            # 1. Check if Tesseract is in PATH (Universal - standard for Linux/Docker)
+            if shutil.which("tesseract"):
+                self.is_ready = True
+                print("LocalOCRService: Tesseract detected in PATH.")
+                return
+
+            # 2. Check common Windows path (Local dev only)
+            windows_path = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
+            if os.path.exists(windows_path):
+                pytesseract.pytesseract.tesseract_cmd = windows_path
+                self.is_ready = True
+                print("LocalOCRService: Tesseract detected at Windows path.")
+                return
+
+            print("WARNING: LocalOCRService: Tesseract binary not found. Local OCR fallback is disabled.")
 
     def extract_text(self, image_bytes: bytes) -> str:
-        """Processes an image locally and returns all detected text as a single string."""
+        """Processes an image locally using Tesseract and returns all detected text."""
         self._initialize_on_demand()
-        if not self.reader:
+        if not self.is_ready:
             return ""
 
         try:
-            # EasyOCR expects an image file path, a PIL image, or a numpy array
-            image = Image.open(io.BytesIO(image_bytes)).convert('RGB')
-            # Convert PIL to numpy array
-            image_np = np.array(image)
-            
-            # detail=0 returns only the text list
-            results = self.reader.readtext(image_np, detail=0)
-            
-            # Join with spacing to help LLM understand layout
-            return "\n".join(results)
+            image = Image.open(io.BytesIO(image_bytes))
+            # Tesseract image_to_string handles the OCR
+            text = pytesseract.image_to_string(image)
+            return text.strip()
         except Exception as e:
-            print(f"LocalOCRService: Extraction error: {e}")
+            print(f"LocalOCRService: Tesseract Extraction error: {e}")
             return ""
 
 local_ocr_service = LocalOCRService()

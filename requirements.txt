@@ -18,6 +18,4 @@ qrcode[pil]
 python-barcode
 Pillow
 requests
-easyocr
-torch
-torchvision
+pytesseract
