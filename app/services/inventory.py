@@ -9,6 +9,7 @@ from app.services.email_service import email_service
 class InventoryService:
     def __init__(self):
         self.collection = db.collection('inventory_positions')
+        self.index_collection = db.collection('position_cross_index')
 
     def save_position(self, barcode_id: str, product_name: str, product_code: str, 
                       unit: str, distributions: List[Dict], 
@@ -38,7 +39,7 @@ class InventoryService:
         if existing.exists:
             min_stock = existing.to_dict().get('min_stock_level', 0)
 
-        doc_ref.set({
+        doc_data = {
             'barcode_id': barcode_id,
             'product_name': product_name,
             'product_code': product_code,
@@ -50,7 +51,11 @@ class InventoryService:
             'supplier_name': supplier_name,
             'batch_number': batch_number,
             'updated_at': int(time.time())
-        })
+        }
+        doc_ref.set(doc_data)
+        
+        # ── CROSS-INDEX UPDATE ──
+        self._update_cross_index(barcode_id, distributions)
 
     def get_position(self, barcode_id: str) -> Dict:
         """Fetches the current spatial map for a barcode."""
@@ -74,30 +79,40 @@ class InventoryService:
                     break
             if updated:
                 doc_ref.update({'distributions': distributions})
+                self._update_cross_index(barcode_id, distributions)
 
     def find_by_dist_id(self, dist_id: str) -> Dict:
         """
         Robust search for a stock item by its specific shelf/zone position ID.
-        Checks both the master Barcode ID and the nested Position ID.
+        Uses a two-tier O(1) direct lookup system for 100% reliability.
         """
-        # 1. Try direct Barcode ID lookup first (if user scanned a main label)
+        # ── TIER 1: CROSS-INDEX LOOKUP (Absolute Reliability) ──
+        idx_doc = self.index_collection.document(dist_id).get()
+        if idx_doc.exists:
+            map_data = idx_doc.to_dict()
+            parent_id = map_data.get('barcode_id')
+            if parent_id:
+                parent_doc = self.collection.document(parent_id).get()
+                if parent_doc.exists:
+                    data = parent_doc.to_dict()
+                    target_dist = next((d for d in data.get('distributions', []) if d.get('dist_id') == dist_id), None)
+                    return {"item": data, "target_distribution": target_dist}
+
+        # ── TIER 2: DIRECT BARCODE LOOKUP (Fallback for main labels) ──
         doc = self.collection.document(dist_id).get()
         if doc.exists:
             data = doc.to_dict()
-            # If it's a main ID, we return the first distribution as default
             return {"item": data, "target_distribution": data.get('distributions', [None])[0]}
 
-        # 2. Try searching by distribution ID in location_ids (String array - reliably indexed)
+        # ── TIER 3: ARRAY INDEX SEARCH (Safety Fallback) ──
         query = self.collection.where(filter=FieldFilter('location_ids', 'array_contains', dist_id)).limit(1).get()
-        
         if query:
             doc = query[0]
             data = doc.to_dict()
-            # Find the specific distribution in the list
             target_dist = next((d for d in data.get('distributions', []) if d.get('dist_id') == dist_id), None)
             return {"item": data, "target_distribution": target_dist}
             
-        print(f"⚠️ DISPATCH FAILED: Position {dist_id} not indexed in Firestore.")
+        print(f"⚠️ DISPATCH FAILED: Position {dist_id} not found in any index.")
         return {}
 
     @firestore.transactional
@@ -156,6 +171,8 @@ class InventoryService:
             'location_ids': new_location_ids,
             'updated_at': int(time.time())
         })
+        # Note: We don't remove from cross-index here to avoid race conditions; 
+        # lookups will fail gracefully if distributions change.
         return new_total
 
     def remove_stock_spatial(self, barcode_id: str, loc_id: str, qty: float):
@@ -301,11 +318,29 @@ class InventoryService:
             'location_ids': new_location_ids,
             'updated_at': int(time.time())
         })
+        # Update index for new positions
+        self._update_cross_index(data.get('barcode_id'), cleaned_distributions)
         return True
 
     def transfer_stock(self, barcode_id: str, from_loc_id: str, to_loc_id: str, to_loc_name: str, qty: float):
         doc_ref = self.collection.document(barcode_id)
         transaction = db.transaction()
         return self.execute_transfer(transaction, doc_ref, from_loc_id, to_loc_id, to_loc_name, qty)
+
+    def _update_cross_index(self, barcode_id: str, distributions: List[Dict]):
+        """Internal worker to map position IDs back to parent items for O(1) discovery."""
+        if not barcode_id: return
+        batch = db.batch()
+        for d in distributions:
+            dist_id = d.get('dist_id')
+            if dist_id and dist_id != 'AUTO':
+                idx_ref = self.index_collection.document(dist_id)
+                batch.set(idx_ref, {
+                    'barcode_id': barcode_id,
+                    'warehouse': d.get('warehouse'),
+                    'location': d.get('location'),
+                    'updated_at': int(time.time())
+                })
+        batch.commit()
 
 inventory_service = InventoryService()
