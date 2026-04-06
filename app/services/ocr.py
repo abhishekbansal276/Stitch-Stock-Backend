@@ -48,8 +48,7 @@ class OCRService:
             try:
                 self.groq_client = Groq(api_key=self.groq_key)
                 self.preferred_groq = [
-                    "llama-3.2-90b-vision-preview",
-                    "llama-3.2-11b-vision-preview",
+                    "meta-llama/llama-4-scout-17b-16e-instruct",
                 ]
                 self.groq_model = self._pick_groq_model()
                 logger.info(f"OCRService: Groq initialized with model: {self.groq_model}")
@@ -79,8 +78,8 @@ class OCRService:
                 if p in available_ids:
                     return p
         except Exception as e:
-            logger.warning(f"OCRService: Could not list Groq models: {e}. Defaulting to llama-3.2-11b-vision-preview")
-        return "llama-3.2-11b-vision-preview"
+            logger.warning(f"OCRService: Could not list Groq models: {e}. Defaulting to meta-llama/llama-4-scout-17b-16e-instruct")
+        return "meta-llama/llama-4-scout-17b-16e-instruct"
 
     # ─────────────────────────────────────────────────────────────────────────
 
