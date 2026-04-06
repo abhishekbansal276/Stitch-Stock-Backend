@@ -3,6 +3,8 @@ import time
 import json
 import re
 import uuid
+import traceback
+import sys
 from datetime import datetime, timedelta
 from typing import List, Dict
 
@@ -119,7 +121,8 @@ class SheetsService:
             self._cache_expiry = time.time() + 300
             return self._cached_header_map
         except Exception as e:
-            print(f"Header init error: {e}")
+            print(f"CRITICAL: Header init error: {e}")
+            traceback.print_exc()
             return self.header_map
 
     def _ensure_sheet(self, title: str, schema: List[str], existing: Dict):

@@ -2,7 +2,9 @@ import time
 import os
 import uuid
 import traceback
-from typing import List, Dict
+import asyncio
+from datetime import datetime
+from typing import List, Dict, Optional
 from dotenv import load_dotenv
 from fastapi import FastAPI, UploadFile, File, Depends, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
@@ -15,7 +17,6 @@ from app.services.location_service import location_service
 from app.services.activity_service import activity_service
 from app.services.google_drive_service import drive_service
 from app.dependencies.auth import get_current_user
-from fastapi import BackgroundTasks
 from app.models.stock import StockTransferRequest
 
 # Load environment variables for local development
@@ -31,6 +32,75 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ── SYNC REAPER (Data Integrity) ───────────────────────────────────────────
+
+async def _automated_sync_reaper():
+    """Background loop to identify and retry failed/pending syncs."""
+    await asyncio.sleep(20) # Give the server time to fully boot
+    print("🔄 SYNC REAPER: Starting periodic integrity check...")
+    
+    while True:
+        try:
+            # Query Firestore for docs needing sync
+            # Collection: 'inventory_positions'
+            docs = db.collection("inventory_positions")\
+                     .where("sync_status", "in", ["pending", "error"])\
+                     .limit(100).get()
+            
+            if docs:
+                print(f"📊 SYNC REAPER: Found {len(docs)} items requiring sync. Processing...")
+                for doc in docs:
+                    data = doc.to_dict()
+                    doc_id = doc.id
+                    # Re-trigger ingestion for this specific record
+                    await _process_single_sync(doc_id, data)
+            
+        except Exception as e:
+            print(f"❌ SYNC REAPER ERROR: {e}")
+            
+        # Run every 5 minutes
+        await asyncio.sleep(300)
+
+async def _process_single_sync(doc_id: str, data: Dict):
+    """Internal helper to sync a single Firestore doc to Drive and Sheets."""
+    try:
+        user_email = data.get("created_by", "system@reaper.auto")
+        label = f"{data.get('product_name', 'Item')} - {data.get('warehouse', 'WH')}"
+        
+        # 1. ARCHIVE BARCODE (to Drive)
+        link = data.get("barcode_link")
+        if not link:
+            link = drive_service.generate_barcode(doc_id, label)
+            if link:
+                db.collection("inventory_positions").document(doc_id).update({
+                    "barcode_link": link
+                })
+
+        # 2. SYNC TO SHEETS
+        # Prepare item for SheetsService
+        sheets_item = {**data, "id": doc_id, "barcode_link": link}
+        success = sheets_service.sync_batch_to_ledger([sheets_item], user_email)
+        
+        # 3. UPDATE STATUS
+        if success:
+            db.collection("inventory_positions").document(doc_id).update({
+                "sync_status": "synced",
+                "synced_at": datetime.now().isoformat(),
+                "sync_error": None
+            })
+            print(f"✅ SYNC REAPER: Successfully synced {doc_id}")
+        else:
+            print(f"⚠️ SYNC REAPER: Failed to sync {doc_id} to Sheets.")
+            
+    except Exception as e:
+        print(f"❌ SYNC REAPER: Crash processing {doc_id}: {e}")
+
+@app.on_event("startup")
+async def startup_event():
+    """Kick off background workers on server start."""
+    asyncio.create_task(_automated_sync_reaper())
+    print("🚀 BACKEND: Automated Sync Reaper is active.")
 
 # Root/Health check
 @app.get("/")
