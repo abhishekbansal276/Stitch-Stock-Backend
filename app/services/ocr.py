@@ -189,6 +189,7 @@ OUTPUT — Return ONLY this JSON. No explanation. No markdown fences.
     {
       "Product Code": "...",
       "Product Name": "...",
+      "Model Name": "...",
       "Batch Number": "...",
       "Quantity Received": "...",
       "Unit": "...",
@@ -256,6 +257,10 @@ FIELD MAPPING — accept ANY of these label aliases
     Item Description, Material Description, Particulars,
     Product, Commodity, Goods Description, Article, Item,
     Name of Goods, Product Details
+
+▸ Model Name
+  → Model Name, Model, Model No., Model Number, mname, 
+    Type, Variant, Version, Specification
 
 ▸ Batch Number
   → Batch No., Batch Number, Lot No., Lot Number, Serial Batch,
