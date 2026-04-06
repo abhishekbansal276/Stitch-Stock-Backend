@@ -14,21 +14,33 @@ Usage:
 """
 import os, json, time, datetime, sys
 
+from app.services.firebase import BASE_DIR
+
 print("=" * 60)
 print("JWT SIGNATURE DIAGNOSTIC")
 print("=" * 60)
 
-# ── 1. Load the JSON ──────────────────────────────────────────
+# ── 1. Load the JSON or File ──────────────────────────────────
 sa_json = os.getenv("FIREBASE_SERVICE_ACCOUNT_JSON")
-if not sa_json:
-    print("❌ FIREBASE_SERVICE_ACCOUNT_JSON is not set")
-    sys.exit(1)
+sa_file = BASE_DIR / os.getenv("SERVICE_ACCOUNT_KEY", "serviceAccountKey.json")
+cred = None
 
-try:
-    cred = json.loads(sa_json)
-    print(f"✓  JSON parsed OK")
-except json.JSONDecodeError as e:
-    print(f"❌ JSON parse failed: {e}")
+if sa_json:
+    try:
+        cred = json.loads(sa_json)
+        print(f"✓  JSON parsed from Environment Variable OK")
+    except json.JSONDecodeError as e:
+        print(f"❌ JSON parse from ENV failed: {e}")
+
+if not cred and sa_file.exists():
+    try:
+        cred = json.loads(sa_file.read_text())
+        print(f"✓  JSON parsed from Physical File OK: {sa_file}")
+    except Exception as e:
+        print(f"❌ JSON parse from File failed: {e}")
+
+if not cred:
+    print("❌ NO SERVICE ACCOUNT FOUND (Check your env or file)")
     sys.exit(1)
 
 # ── 2. Check key fields ───────────────────────────────────────

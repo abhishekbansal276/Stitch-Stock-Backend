@@ -8,6 +8,7 @@ from typing import List, Dict, Optional
 from dotenv import load_dotenv
 from fastapi import FastAPI, UploadFile, File, Depends, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
+from google.cloud.firestore_v1.base_query import FieldFilter
 from app.routers import users
 from app.services.firebase import initialize_firebase, db
 from app.services.ocr import ocr_service
@@ -45,7 +46,7 @@ async def _automated_sync_reaper():
             # Query Firestore for docs needing sync
             # Collection: 'inventory_positions'
             docs = db.collection("inventory_positions")\
-                     .where("sync_status", "in", ["pending", "error"])\
+                     .where(filter=FieldFilter("sync_status", "in", ["pending", "error"]))\
                      .limit(100).get()
             
             if docs:
