@@ -37,8 +37,12 @@ class OCRService:
         if self.groq_key:
             try:
                 self.groq_client = Groq(api_key=self.groq_key)
-                # Elite Vision Model for Groq
-                self.groq_model = "llama-3.2-11b-vision-preview"
+                self.preferred_groq = [
+                    "meta-llama/llama-4-scout-17b-16e-instruct", # Latest 2026 Vision
+                    "llama-3.2-11b-vision-instant",
+                    "llama-3.2-90b-vision-preview",
+                ]
+                self.groq_model = self._pick_groq_model()
                 logger.info(f"OCRService: Groq initialized with model: {self.groq_model}")
             except Exception as e:
                 logger.error(f"OCRService: Failed to initialize Groq client: {e}")
@@ -57,6 +61,17 @@ class OCRService:
         except Exception as e:
             logger.warning(f"OCRService: Could not list Gemini models: {e}. Defaulting to gemini-2.0-flash")
         return "gemini-2.0-flash"
+
+    def _pick_groq_model(self) -> str:
+        try:
+            available_models = self.groq_client.models.list()
+            available_ids = {m.id for m in available_models}
+            for p in self.preferred_groq:
+                if p in available_ids:
+                    return p
+        except Exception as e:
+            logger.warning(f"OCRService: Could not list Groq models: {e}. Defaulting to meta-llama/llama-4-scout-17b-16e-instruct")
+        return "meta-llama/llama-4-scout-17b-16e-instruct"
 
     # ─────────────────────────────────────────────────────────────────────────
 
@@ -100,6 +115,11 @@ class OCRService:
                 return self._run_groq_vision(content, mime_type)
             except Exception as e:
                 logger.error(f"OCRService: Stage 2 (Groq Vision) failed: {e}")
+                # If we get a "model_decommissioned" or 400 error, try rotating and retrying once
+                if "model_decommissioned" in str(e).lower() or "400" in str(e):
+                    logger.warning("OCRService: Groq model decommissioned or invalid. Attempting rotation...")
+                    self._rotate_groq_model()
+                    return self._run_groq_vision(content, mime_type)
                 raise Exception(f"Total extraction failure across all vision providers: {e}")
 
         raise Exception("OCRService: Extraction failed. No working Vision clients available.")
@@ -179,6 +199,8 @@ class OCRService:
                 logger.error(f"OCRService: 🛑 Quota limit reached for {provider}.")
                 if provider == "Gemini":
                     self._rotate_gemini_model()
+                elif provider == "Groq":
+                    self._rotate_groq_model()
         return None
 
     def _rotate_gemini_model(self):
@@ -188,6 +210,16 @@ class OCRService:
             next_idx = (curr_idx + 1) % len(self.preferred_gemini)
             self.gemini_model = self.preferred_gemini[next_idx]
             logger.info(f"OCRService: 🔄 Rotating Gemini model to: {self.gemini_model}")
+        except:
+            pass
+
+    def _rotate_groq_model(self):
+        """Switches current Groq model to the next one in preferred list."""
+        try:
+            curr_idx = self.preferred_groq.index(self.groq_model)
+            next_idx = (curr_idx + 1) % len(self.preferred_groq)
+            self.groq_model = self.preferred_groq[next_idx]
+            logger.info(f"OCRService: 🔄 Rotating Groq model to: {self.groq_model}")
         except:
             pass
 
