@@ -3,14 +3,13 @@ import json
 import re
 import time
 import logging
+import base64
 from typing import Dict, List, Optional
 from google import genai
 from google.genai import types
 from groq import Groq
-from app.services.local_ocr import local_ocr_service
 
 # ── LOGGING CONFIGURATION ───────────────────────────────────────────────────
-# Ensuring we have visible logs for quota issues
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("OCRService")
 
@@ -25,7 +24,6 @@ class OCRService:
             self.preferred_gemini = [
                 "gemini-2.0-flash",
                 "gemini-1.5-flash",
-                "gemini-1.5-pro",
             ]
             self.gemini_model = self._pick_gemini_model()
             logger.info(f"OCRService: Gemini initialized with model: {self.gemini_model}")
@@ -34,12 +32,13 @@ class OCRService:
             self.gemini_client = None
             self.gemini_model = None
 
-        # 2. Groq Configuration (High-performance Text LLM Fallback)
+        # 2. Groq Configuration (High-performance Vision Fallback)
         self.groq_key = os.getenv("GROQ_API_KEY")
         if self.groq_key:
             try:
                 self.groq_client = Groq(api_key=self.groq_key)
-                self.groq_model = "llama-3.3-70b-versatile"
+                # Elite Vision Model for Groq
+                self.groq_model = "llama-3.2-11b-vision-preview"
                 logger.info(f"OCRService: Groq initialized with model: {self.groq_model}")
             except Exception as e:
                 logger.error(f"OCRService: Failed to initialize Groq client: {e}")
@@ -64,16 +63,24 @@ class OCRService:
     def extract_from_file(self, content: bytes, filename: str,
                           existing_headers: List[str] = None) -> Dict:
         """
-        Main extraction pipeline with multi-stage fallback:
-        1. Gemini Vision (Directly from file)
-        2. Local OCR + Gemini Text (If Vision fails/quota hit)
-        3. Local OCR + Groq Text (If Gemini Text fails/quota hit)
+        Dual-Vision extraction pipeline:
+        1. Gemini Vision (Stage 1)
+        2. Groq Vision (Stage 2 - Direct image fallback if Gemini exceeds quota)
         """
         ext = filename.rsplit(".", 1)[-1].lower()
-        mime_map = {"pdf": "application/pdf", "png": "image/png",
-                    "jpg": "image/jpeg", "jpeg": "image/jpeg", "webp": "image/webp"}
-        mime_type = mime_map.get(ext, "image/jpeg")
+        # USER DIRECTIVE: Remove PDF support. Only allow images.
+        mime_map = {
+            "png": "image/png",
+            "jpg": "image/jpeg",
+            "jpeg": "image/jpeg",
+            "webp": "image/webp"
+        }
         
+        if ext not in mime_map:
+            logger.error(f"OCRService: Rejected unsupported file type '{ext}'")
+            raise Exception(f"Unsupported file type '{ext}'. Only images (PNG, JPG, WEBP) are supported.")
+            
+        mime_type = mime_map[ext]
         logger.info(f"OCRService: Processing '{filename}' ({mime_type})")
 
         # --- STAGE 1: GEMINI VISION ---
@@ -81,36 +88,21 @@ class OCRService:
             try:
                 return self._run_gemini_vision(content, mime_type)
             except Exception as e:
-                logger.warning(f"OCRService: Stage 1 (Vision) failed: {e}. Falling back to Stage 2...")
-        
-        # --- STAGE 2: LOCAL OCR + GEMINI/GROQ TEXT ---
-        logger.info("OCRService: 🛠️ STAGE 2: Running Local OCR (Tesseract)...")
-        extracted_text = local_ocr_service.extract_text(content)
-        
-        if not extracted_text:
-            raise Exception("Total extraction failure: Vision stage failed and Local OCR returned no text.")
-
-        # Try Gemini Text first
-        if self.gemini_client:
-            try:
-                return self._run_gemini_text(extracted_text)
-            except Exception as e:
-                logger.warning(f"OCRService: Stage 2 (Gemini Text) failed: {e}")
+                logger.warning(f"OCRService: Stage 1 (Gemini Vision) failed: {e}")
                 if self.groq_client:
-                    logger.info("OCRService: 🔄 Falling back to Groq for text structuring...")
+                    logger.info("OCRService: 🔄 Falling back to Stage 2 (Groq Vision)...")
                 else:
-                    logger.error("OCRService: Gemini exhausted and no Groq fallback configured.")
                     raise Exception(f"Extraction failed: Gemini exhausted and no Groq fallback configured. Error: {e}")
 
-        # Final Fallback to Groq Text
+        # --- STAGE 2: GROQ VISION FALLBACK ---
         if self.groq_client:
             try:
-                return self._run_groq_text(extracted_text)
+                return self._run_groq_vision(content, mime_type)
             except Exception as e:
-                logger.error(f"OCRService: Stage 3 (Groq) failed: {e}")
-                raise Exception(f"Total extraction failure across all providers: {e}")
+                logger.error(f"OCRService: Stage 2 (Groq Vision) failed: {e}")
+                raise Exception(f"Total extraction failure across all vision providers: {e}")
 
-        raise Exception("OCRService: Extraction failed. No working AI clients available.")
+        raise Exception("OCRService: Extraction failed. No working Vision clients available.")
 
     # ── INDIVIDUAL STAGE RUNNERS ──────────────────────────────────────────────
 
@@ -133,69 +125,64 @@ class OCRService:
                 )
                 return self._clean_and_parse(response.text.strip())
             except Exception as e:
-                wait_time = self._handle_quota_error(e, attempt, max_retries)
+                wait_time = self._handle_quota_error(e, attempt, max_retries, provider="Gemini")
                 if wait_time:
                     time.sleep(wait_time)
                     continue
                 raise e
 
-    def _run_gemini_text(self, text: str) -> Dict:
+    def _run_groq_vision(self, content: bytes, mime_type: str) -> Dict:
+        """Sends the image directly to Groq's Vision model via Base64 encoding."""
         max_retries = 1
-        prompt = f"Convert the following OCR text into structured JSON:\n\n{text}\n\nREMAINDER: {EXTRACTION_PROMPT}"
         for attempt in range(max_retries):
             try:
-                logger.info(f"OCRService: Requesting Gemini Text [{self.gemini_model}]")
-                response = self.gemini_client.models.generate_content(
-                    model=self.gemini_model,
-                    contents=prompt,
-                    config=types.GenerateContentConfig(
-                        response_mime_type="application/json",
-                        temperature=0.1,
-                    ),
+                logger.info(f"OCRService: Requesting Groq Vision [{self.groq_model}]")
+                base64_image = base64.b64encode(content).decode('utf-8')
+                
+                chat_completion = self.groq_client.chat.completions.create(
+                    messages=[
+                        {
+                            "role": "user",
+                            "content": [
+                                {"type": "text", "text": EXTRACTION_PROMPT},
+                                {
+                                    "type": "image_url",
+                                    "image_url": {
+                                        "url": f"data:{mime_type};base64,{base64_image}"
+                                    }
+                                }
+                            ]
+                        }
+                    ],
+                    model=self.groq_model,
+                    temperature=0,
+                    response_format={"type": "json_object"}
                 )
-                return self._clean_and_parse(response.text.strip())
+                raw = chat_completion.choices[0].message.content
+                return self._clean_and_parse(raw)
             except Exception as e:
-                wait_time = self._handle_quota_error(e, attempt, max_retries)
+                wait_time = self._handle_quota_error(e, attempt, max_retries, provider="Groq")
                 if wait_time:
                     time.sleep(wait_time)
                     continue
                 raise e
 
-    def _run_groq_text(self, text: str) -> Dict:
-        logger.info(f"OCRService: Requesting Groq Structuring [{self.groq_model}]")
-        prompt = f"Convert the following OCR text into structured JSON as per requirements:\n\n{text}\n\nINSTRUCTION: {EXTRACTION_PROMPT}"
-        try:
-            chat_completion = self.groq_client.chat.completions.create(
-                messages=[
-                    {"role": "system", "content": "You are an AI that converts OCR text to exact JSON. Return ONLY the JSON object."},
-                    {"role": "user", "content": prompt}
-                ],
-                model=self.groq_model,
-                temperature=0,
-                response_format={"type": "json_object"}
-            )
-            raw = chat_completion.choices[0].message.content
-            return self._clean_and_parse(raw)
-        except Exception as e:
-            logger.error(f"OCRService: Groq API Error: {e}")
-            raise e
-
-    def _handle_quota_error(self, e: Exception, attempt: int, max_retries: int) -> Optional[int]:
+    def _handle_quota_error(self, e: Exception, attempt: int, max_retries: int, provider: str) -> Optional[int]:
         err_str = str(e).upper()
         if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
             if attempt < max_retries - 1:
-                # Standard Gemini wait time for 429
+                # Standard wait time for quota resets
                 wait = 16 
-                logger.warning(f"OCRService: ⚠️ Quota Exhausted. Waiting {wait}s before retry...")
+                logger.warning(f"OCRService: ⚠️ {provider} Quota Exhausted. Waiting {wait}s before retry...")
                 return wait
             else:
-                logger.error(f"OCRService: 🛑 Quota limit reached for {self.gemini_model}.")
-                # Model Rotation: Try to switch model for future calls
-                self._rotate_gemini_model()
+                logger.error(f"OCRService: 🛑 Quota limit reached for {provider}.")
+                if provider == "Gemini":
+                    self._rotate_gemini_model()
         return None
 
     def _rotate_gemini_model(self):
-        """Switches current model to the next on one in preferred list."""
+        """Switches current Gemini model to the next one in preferred list."""
         try:
             curr_idx = self.preferred_gemini.index(self.gemini_model)
             next_idx = (curr_idx + 1) % len(self.preferred_gemini)
