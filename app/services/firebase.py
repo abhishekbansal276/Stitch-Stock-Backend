@@ -34,66 +34,68 @@ def clean_private_key(pk: str) -> str:
     return pk.strip()
 
 
+def get_service_account_info():
+    """
+    Triage and return service account info as a dict from environment variables or file.
+    Priority: JSON Env Var > Base64 Env Var > Explicit File Path Env Var.
+    """
+    # 1. Plain JSON string (Primary)
+    sa_json = os.getenv("FIREBASE_SERVICE_ACCOUNT_JSON")
+    if sa_json:
+        try:
+            info = json.loads(sa_json)
+            if "private_key" in info:
+                info["private_key"] = clean_private_key(info["private_key"])
+            print("CredentialProvider: Using FIREBASE_SERVICE_ACCOUNT_JSON")
+            return info
+        except Exception as e:
+            print(f"CredentialProvider: Error parsing FIREBASE_SERVICE_ACCOUNT_JSON: {e}")
+
+    # 2. Base64 encoded string
+    sa_b64 = os.getenv("FIREBASE_SERVICE_ACCOUNT_B64")
+    if sa_b64:
+        try:
+            decoded = base64.b64decode(sa_b64).decode("utf-8")
+            info = json.loads(decoded)
+            if "private_key" in info:
+                info["private_key"] = clean_private_key(info["private_key"])
+            print("CredentialProvider: Using FIREBASE_SERVICE_ACCOUNT_B64")
+            return info
+        except Exception as e:
+            print(f"CredentialProvider: Error parsing FIREBASE_SERVICE_ACCOUNT_B64: {e}")
+
+    # 3. Explicit File Path (Optional, for local dev only)
+    sa_file = os.getenv("SERVICE_ACCOUNT_FILE")
+    if sa_file:
+        path = BASE_DIR / sa_file if not Path(sa_file).is_absolute() else Path(sa_file)
+        if path.exists():
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    info = json.load(f)
+                    if "private_key" in info:
+                        info["private_key"] = clean_private_key(info["private_key"])
+                    print(f"CredentialProvider: Using explicit file {path}")
+                    return info
+            except Exception as e:
+                print(f"CredentialProvider: Error reading {path}: {e}")
+    
+    return None
+
+
 def initialize_firebase():
-    """Build the Firestore client using private key credentials."""
+    """Build the Firestore client with modern credential triaging."""
     if not firebase_admin._apps:
-        # 1. File-based priority (Repository uploaded)
-        sa_file = os.getenv("SERVICE_ACCOUNT_KEY", "serviceAccountKey.json")
-        abs_sa_path = BASE_DIR / sa_file
-        if abs_sa_path.exists():
-            try:
-                cred = credentials.Certificate(str(abs_sa_path))
-                firebase_admin.initialize_app(cred)
-                print(f"Firebase: Initialized from absolute repository file: {abs_sa_path}")
-                return firestore.client()
-            except Exception as e:
-                print(f"Firebase: Repository file check failed ({abs_sa_path}): {e}")
-
-        # 2. Plain JSON env var
-        sa_json = os.getenv("FIREBASE_SERVICE_ACCOUNT_JSON")
-        if sa_json:
-            try:
-                cred_dict = json.loads(sa_json)
-                if "private_key" in cred_dict:
-                    cred_dict["private_key"] = clean_private_key(cred_dict["private_key"])
-                
-                cred = credentials.Certificate(cred_dict)
-                firebase_admin.initialize_app(cred)
-                print("Firebase: Initialized from FIREBASE_SERVICE_ACCOUNT_JSON")
-                return firestore.client()
-            except Exception as e:
-                print(f"Firebase: Failed to parse FIREBASE_SERVICE_ACCOUNT_JSON: {e}")
-
-        # 3. Base64 fallback (Legacy)
-        sa_b64 = os.getenv("FIREBASE_SERVICE_ACCOUNT_B64")
-        if sa_b64:
-            try:
-                decoded = base64.b64decode(sa_b64).decode("utf-8")
-                cred_dict = json.loads(decoded)
-                if "private_key" in cred_dict:
-                    cred_dict["private_key"] = clean_private_key(cred_dict["private_key"])
-                    print(f"Firebase: B64 Private key verified (len={len(cred_dict['private_key'])})")
-
-                cred = credentials.Certificate(cred_dict)
-                firebase_admin.initialize_app(cred)
-                print("Firebase: Initialized from FIREBASE_SERVICE_ACCOUNT_B64")
-                return firestore.client()
-            except Exception as e:
-                print(f"Firebase: Failed to parse FIREBASE_SERVICE_ACCOUNT_B64: {e}")
-
-        # 3. File fallback (Absolute Resolve)
-        sa_file = os.getenv("SERVICE_ACCOUNT_KEY", "serviceAccountKey.json")
-        abs_sa_path = BASE_DIR / sa_file
-        if abs_sa_path.exists():
-            try:
-                cred = credentials.Certificate(str(abs_sa_path))
-                firebase_admin.initialize_app(cred)
-                print(f"Firebase: Initialized from absolute file: {abs_sa_path}")
-                return firestore.client()
-            except Exception as e:
-                print(f"Firebase: Failed to read from file {abs_sa_path}: {e}")
+        info = get_service_account_info()
         
-        # FINAL FALLBACK (e.g. for CI/CD or local without key)
+        if info:
+            try:
+                cred = credentials.Certificate(info)
+                firebase_admin.initialize_app(cred)
+                return firestore.client()
+            except Exception as e:
+                print(f"Firebase: Failed to initialize with provided info: {e}")
+
+        # FINAL FALLBACK (e.g. for CI/CD or Cloud Run Service Accounts)
         try:
             firebase_admin.initialize_app()
             print("Firebase: Initialized with default Application Credentials")
