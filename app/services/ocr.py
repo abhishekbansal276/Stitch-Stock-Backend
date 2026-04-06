@@ -6,43 +6,11 @@ import logging
 import base64
 import io
 from typing import Dict, List, Optional
+from pydantic import BaseModel, Field
 from google import genai
 from google.genai import types
 from groq import Groq
 from PIL import Image
-from pydantic import BaseModel, Field
-
-# ── STRUCTURED OUTPUT SCHEMAS ────────────────────────────────────────────────
-
-class InvoiceTax(BaseModel):
-    label: str = Field(description="Tax type (e.g., CGST, SGST, IGST)")
-    amount: float = Field(description="Tax amount as a number")
-
-class InvoiceHeader(BaseModel):
-    Date: Optional[str] = Field(None, description="Invoice date in YYYY-MM-DD format")
-    Invoice_Number: Optional[str] = Field(None, alias="Invoice Number", description="Unique invoice or bill identifier")
-    Supplier_Name: Optional[str] = Field(None, alias="Supplier Name", description="Full name of the company/vendor")
-    Supplier_GST: Optional[str] = Field(None, alias="Supplier GST", description="GSTIN or Tax ID of the supplier")
-    Vehicle_Number: Optional[str] = Field(None, alias="Vehicle Number", description="Logistics vehicle registration number")
-    Transporter_Name: Optional[str] = Field(None, alias="Transporter Name", description="Logistics carrier name")
-    Taxable_Amount: float = Field(0.0, alias="Taxable Amount", description="Total value before taxes")
-    Taxes: List[InvoiceTax] = Field(default_factory=list, description="List of all bill-level taxes (CGST, SGST, IGST, etc.)")
-    Transport_Freight: float = Field(0.0, alias="Transport / Freight", description="Total freight or transport cost for the bill")
-    Grand_Total: float = Field(0.0, alias="Grand Total", description="Final invoice amount including all taxes and charges")
-
-class InvoiceItem(BaseModel):
-    Product_Code: Optional[str] = Field(None, alias="Product Code", description="Universal item code, HSN, or internal SKU")
-    Product_Name: Optional[str] = Field(None, alias="Product Name", description="Full description of the goods")
-    Batch_Number: Optional[str] = Field(None, alias="Batch Number", description="Manufacturing or lot batch identifier")
-    Quantity_Received: float = Field(0.0, alias="Quantity Received", description="Total units found in this document")
-    Unit: Optional[str] = Field("PCS", description="Unit of measure (e.g. MT, KG, PCS, BAGS)")
-    Number_of_Bags: float = Field(0.0, alias="Number of Bags", description="Packaging count (e.g. no of bags)")
-    Rate_per_Unit: float = Field(0.0, alias="Rate per Unit", description="The price of 1 unit of the item")
-    Total_Amount: float = Field(0.0, alias="Total Amount", description="Line item subtotal (typically Qty * Rate)")
-
-class InvoiceExtraction(BaseModel):
-    header: InvoiceHeader
-    items: List[InvoiceItem]
 
 # ── OPTIMIZATION CONFIGURATION ──────────────────────────────────────────────
 MAX_IMAGE_DIMENSION = 1600
@@ -51,6 +19,38 @@ JPEG_QUALITY = 80
 # ── LOGGING CONFIGURATION ───────────────────────────────────────────────────
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("OCRService")
+
+# ── DATA MODELS (STRUCTURED OUTPUT) ──────────────────────────────────────────
+
+class TaxItem(BaseModel):
+    label: str = Field(description="Tax type, e.g. CGST, SGST, IGST")
+    amount: float = Field(description="Tax amount")
+
+class InvoiceHeader(BaseModel):
+    date: str = Field(alias="Date", description="Invoice date in YYYY-MM-DD format")
+    invoice_number: str = Field(alias="Invoice Number", description="Invoice/Bill/Challan number")
+    supplier_name: str = Field(alias="Supplier Name", description="Name of the supplier/vendor")
+    supplier_gst: str = Field(alias="Supplier GST", description="GSTIN of the supplier")
+    vehicle_number: Optional[str] = Field(alias="Vehicle Number", description="Vehicle registration number if available")
+    transporter_name: Optional[str] = Field(alias="Transporter Name", description="Name of the transport company if available")
+    taxable_amount: float = Field(alias="Taxable Amount", description="Total taxable value before taxes")
+    taxes: List[TaxItem] = Field(alias="Taxes", description="List of individual tax components")
+    transport_freight: float = Field(alias="Transport / Freight", description="Total freight/shipping charges")
+    grand_total: float = Field(alias="Grand Total", description="Final invoice total including all taxes and charges")
+
+class InvoiceItem(BaseModel):
+    product_code: str = Field(alias="Product Code", description="HSN, SKU, or Model number")
+    product_name: str = Field(alias="Product Name", description="Full description of the item")
+    batch_number: Optional[str] = Field(alias="Batch Number", description="Batch or lot number if available")
+    quantity_received: float = Field(alias="Quantity Received", description="Total quantity being received")
+    unit: str = Field(alias="Unit", description="Unit of measure (e.g. PCS, MT, KGS)")
+    number_of_bags: int = Field(alias="Number of Bags", description="Count of bags or packages")
+    rate_per_unit: float = Field(alias="Rate per Unit", description="Price per single unit")
+    total_amount: float = Field(alias="Total Amount", description="Line item total (Qty * Rate)")
+
+class InvoiceExtraction(BaseModel):
+    header: InvoiceHeader
+    items: List[InvoiceItem]
 
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -179,7 +179,7 @@ class OCRService:
     # ── INDIVIDUAL STAGE RUNNERS ──────────────────────────────────────────────
 
     def _run_gemini_vision(self, content: bytes, mime_type: str) -> Dict:
-        max_retries = 3  # INCREASED RETRIES
+        max_retries = 3
         for attempt in range(max_retries):
             try:
                 logger.info(f"OCRService: Requesting Gemini Vision [{self.gemini_model}] (Attempt {attempt+1})")
@@ -192,18 +192,17 @@ class OCRService:
                     ],
                     config=types.GenerateContentConfig(
                         response_mime_type="application/json",
-                        response_schema=InvoiceExtraction, # ELITE STRUCTURED OUTPUT
+                        response_schema=InvoiceExtraction,
                         temperature=0,
-                        max_output_tokens=4096,
+                        max_output_tokens=8192,
                     ),
                 )
                 
-                if response.parsed:
-                    # Successfully parsed by SDK into our Pydantic model
-                    # Convert to standard dict for downstream compatibility
+                # Check for parsed response directly (Elite SDK feature)
+                if hasattr(response, "parsed") and response.parsed:
+                    # Convert Pydantic model to the exact dictionary format expected by the frontend
                     return response.parsed.model_dump(by_alias=True)
                 
-                # Fallback to manual parse if parsed is None for some reason
                 return self._clean_and_parse(response.text.strip())
             except Exception as e:
                 # Fast Fallback: If it's a 404 or first 429, don't wait too long if we have alternatives
@@ -219,6 +218,8 @@ class OCRService:
 
                 wait_time = self._handle_quota_error(e, attempt, max_retries, provider="Gemini")
                 if wait_time:
+                    # If it's the first attempt and we have Groq, maybe just fail-over instead of waiting 16s?
+                    # For now, we'll keep the wait but make it shorter for Gemini rotation
                     time.sleep(wait_time)
                     continue
                 raise e
@@ -300,38 +301,25 @@ class OCRService:
     # ── CLEAN & PARSE ─────────────────────────────────────────────────────────
 
     def _clean_and_parse(self, raw: str) -> Dict:
-        """
-        Cleans and parses raw AI output. 
-        Note: For Gemini, we now prefer response.parsed which bypasses this method.
-        """
         try:
             # 1. Basic Cleaning (Markdown fences and whitespace)
             raw = re.sub(r"^```(?:json)?", "", raw, flags=re.IGNORECASE).strip()
             raw = re.sub(r"```$", "", raw).strip()
-            
-            # Find the first { and last }
             s, e = raw.find("{"), raw.rfind("}")
             if s != -1 and e != -1:
                 raw = raw[s : e + 1]
 
-            # 2. Basic Trailing comma cleanup
+            # 2. Robust Cleaning (Hallucinated scratchpads/calculations)
+            # e.g., "amount": 100, "- calculation" -> "amount": 100
+            raw = re.sub(r'(\d+\.?\d*)\s*,\s*["\']- [^"\'\}]+["\']', r'\1', raw)
+            
+            # 3. Trailing comma cleanup
             raw = re.sub(r',\s*\}', '}', raw)
             raw = re.sub(r',\s*\]', ']', raw)
             
             data = json.loads(raw)
             if "items" not in data:
                 data["items"] = []
-            
-            # --- ELITE FIX: Calculate Final Amount Locally ---
-            for item in data["items"]:
-                total_amt = self._to_float(item.get("Total Amount", 0))
-                taxes = item.get("Taxes", [])
-                if not isinstance(taxes, list):
-                    taxes = []
-                
-                tax_sum = sum(self._to_float(t.get("amount", 0)) for t in taxes if isinstance(t, dict))
-                item["Final Amount"] = round(total_amt + tax_sum, 2)
-                item["Taxes"] = taxes # Ensure it stays a list
             
             data["items"] = self._consolidate(data.get("items", []))
             logger.info(f"OCRService: Extraction complete. Found {len(data['items'])} line items.")
@@ -425,10 +413,9 @@ You are an elite Inventory Auditor AI trained specifically on Indian supplier in
 tax invoices, delivery challans, GRN documents, purchase orders, and e-way bills.
 Extract data with 100% accuracy. Think step by step before finalizing each value.
 
-═══════════════════════════════════════════════
-INSTRUCTION — Return data using the requested JSON Schema. 
-No preamble. No scratchpad. No formatting errors.
-═══════════════════════════════════════════════
+═══════════════════════════════════════════════════════════════════
+COMMAND — Return the data in the standardized JSON schema provided.
+═══════════════════════════════════════════════════════════════════
 
 ═══════════════════════════════════════════════════════════════════════
 FIELD MAPPING — Accept ANY of these aliases (case-insensitive, fuzzy-match)
