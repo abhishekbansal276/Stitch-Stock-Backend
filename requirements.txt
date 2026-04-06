@@ -19,3 +19,4 @@ python-barcode
 Pillow
 requests
 pytesseract
+groq
