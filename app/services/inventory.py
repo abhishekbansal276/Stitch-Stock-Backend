@@ -9,7 +9,9 @@ class InventoryService:
     def __init__(self):
         self.collection = db.collection('inventory_positions')
 
-    def save_position(self, barcode_id: str, product_name: str, product_code: str, unit: str, distributions: List[Dict]):
+    def save_position(self, barcode_id: str, product_name: str, product_code: str, 
+                      unit: str, distributions: List[Dict], 
+                      supplier_name: str = None, batch_number: str = None):
         """
         Stores the spatial distribution of a stock item in Firestore.
         distributions: [{'warehouse': 'DC1', 'location': 'Row 7', 'qty': 10, 'dist_id': 'UID'}, ...]
@@ -44,6 +46,8 @@ class InventoryService:
             'distributions': distributions,
             'location_ids': list(set([l for l in search_locations if l])),
             'min_stock_level': min_stock,
+            'supplier_name': supplier_name,
+            'batch_number': batch_number,
             'updated_at': int(time.time())
         })
 

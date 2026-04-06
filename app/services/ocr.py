@@ -44,7 +44,7 @@ class OCRService:
     def extract_from_file(self, content: bytes, filename: str,
                           existing_headers: List[str] = None) -> Dict:
         if not self.client:
-            return self._mock_extract(filename)
+            raise Exception("Gemini API key not found. Extraction is disabled.")
 
         ext = filename.rsplit(".", 1)[-1].lower()
         mime_map = {"pdf": "application/pdf", "png": "image/png",
@@ -88,7 +88,7 @@ class OCRService:
 
         except Exception as e:
             print(f"Extraction Error: {e}")
-            return self._mock_extract(filename)
+            raise Exception(f"Failed to extract info: {str(e)}")
 
     # ── CONSOLIDATION ─────────────────────────────────────────────────────────
     # Merge rows that share the same Product Code (e.g. multi-batch invoices)
@@ -137,30 +137,6 @@ class OCRService:
 
     # ── MOCK ──────────────────────────────────────────────────────────────────
 
-    def _mock_extract(self, filename: str) -> Dict:
-        return {
-            "header": {
-                "Supplier Name": "GAIL (India) Limited [MOCK]",
-                "Invoice Number": "UPG3A25212061228",
-                "Supplier GST": "09AAACG1209J3ZS",
-                "Date": "2026-03-08",
-                "Vehicle Number": "GJ05CW8825",
-                "Transporter Name": "RITCO LOGISTICS",
-                "Transport / Freight": 23461.20,
-            },
-            "items": [{
-                "Product Name": "G-LEX HDPE-1 (Consolidated)",
-                "Product Code": "B63A003A",
-                "Batch Number": "26021097, 26031098",
-                "Quantity Received": "12.0",
-                "Number of Bags": "480",
-                "Unit": "TO",
-                "Rate per Unit": 125120.0,
-                "Total Amount": 1501440.0,
-                "Taxes (IGST/CGST/SGST)": "271242.22 (IGST)",
-                "Final Amount": 1778144.0,
-            }],
-        }
 
 
 # ── EXTRACTION PROMPT ─────────────────────────────────────────────────────────

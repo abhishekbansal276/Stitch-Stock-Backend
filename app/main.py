@@ -226,7 +226,9 @@ async def _process_async_ingestion(header: dict, items: list, item_ids: list, us
                         item_id, item_data.get('Product Name'), 
                         item_data.get('Product Code'), 
                         item_data.get('Unit', 'PCS'),
-                        distributions
+                        distributions,
+                        supplier_name=header.get('Supplier Name'),
+                        batch_number=item_data.get('Batch Number')
                     )
                 
                 # MARK AS SYNCED ✅
