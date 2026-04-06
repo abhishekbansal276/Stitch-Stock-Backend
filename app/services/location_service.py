@@ -1,6 +1,7 @@
 import time
 from typing import List, Dict
 from app.services.firebase import db
+from google.cloud.firestore_v1.base_query import FieldFilter
 
 class LocationService:
     def __init__(self):
@@ -30,7 +31,7 @@ class LocationService:
             zones = ["Main Floor"]
 
         # Check for duplication (by name)
-        existing = self.collection.where('name', '==', name).limit(1).get()
+        existing = self.collection.where(filter=FieldFilter('name', '==', name)).limit(1).get()
         if existing:
             return existing[0].id
             

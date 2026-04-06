@@ -1,5 +1,6 @@
 from firebase_admin import messaging
 from app.services.firebase import db
+from google.cloud.firestore_v1.base_query import FieldFilter
 from typing import List
 
 class FcmService:
@@ -7,7 +8,7 @@ class FcmService:
         """Sends a push notification to all users with role 'admin'."""
         try:
             # 1. Fetch all admin FCM tokens
-            admins_ref = db.collection('users').where('role', '==', 'admin').stream()
+            admins_ref = db.collection('users').where(filter=FieldFilter('role', '==', 'admin')).stream()
             tokens = []
             for admin in admins_ref:
                 admin_data = admin.to_dict()

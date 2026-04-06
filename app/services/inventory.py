@@ -2,6 +2,7 @@ import time
 import uuid
 from typing import List, Dict
 from app.services.firebase import db
+from google.cloud.firestore_v1.base_query import FieldFilter
 from google.cloud import firestore
 from app.services.email_service import email_service
 
@@ -77,14 +78,13 @@ class InventoryService:
     def find_by_dist_id(self, dist_id: str) -> Dict:
         # Query Firestore for any record containing this dist_id in its distributions list
         query = self.collection.where(
-            u'distributions', u'array_contains_any', 
-            [{'dist_id': dist_id}] # Note: Firestore array-contains with maps requires exact match or collection group index
+            filter=FieldFilter('distributions', 'array_contains_any', [{'dist_id': dist_id}])
         ).limit(1).get()
         
         # Fallback: Since Firestore array_contains with maps is complex, we use the searchable 'location_ids'
         # or we just rely on the fact that scanning a POS code should still fetch the doc if we use a better index.
         # IMPROVED: We'll use a collectionGroup or just search for the dist_id in the searchable tags.
-        query = self.collection.where('location_ids', 'array_contains', dist_id).limit(1).get()
+        query = self.collection.where(filter=FieldFilter('location_ids', 'array_contains', dist_id)).limit(1).get()
         
         if query:
             doc = query[0]
@@ -216,7 +216,7 @@ class InventoryService:
     def get_items_in_zone(self, zone_key: str) -> List[Dict]:
         """Fetch all items residing in a specific physical ID or hierarchical key."""
         # zone_key is "Warehouse - Location"
-        docs = self.collection.where('location_ids', 'array_contains', zone_key).stream()
+        docs = self.collection.where(filter=FieldFilter('location_ids', 'array_contains', zone_key)).stream()
         results = []
         for doc in docs:
             data = doc.to_dict()

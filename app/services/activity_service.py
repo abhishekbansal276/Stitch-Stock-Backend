@@ -1,6 +1,7 @@
 import time
 from typing import Dict, Any, Optional
 from app.services.firebase import db
+from google.cloud.firestore_v1.base_query import FieldFilter
 from app.services.fcm_service import fcm_service
 
 class ActivityService:
@@ -57,7 +58,7 @@ class ActivityService:
                 # Firestore limited search: start at prefix
                 # We also pull all and search in Python if firestore lacks complex indexes
                 # For better optimization at scale, we use 'product_code' field filter
-                query = query.where('product_code', '>=', search).where('product_code', '<=', search + '\uf8ff')
+                query = query.where(filter=FieldFilter('product_code', '>=', search)).where(filter=FieldFilter('product_code', '<=', search + '\uf8ff'))
 
             if last_ts:
                 query = query.start_after({'created_at': last_ts})
