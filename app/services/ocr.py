@@ -65,9 +65,8 @@ class OCRService:
             
             self.gemini_client = genai.Client(api_key=self.gemini_key)
             self.preferred_gemini = [
-                "gemini-2.0-flash",
-                "gemini-2.0-flash-exp",
-                "gemini-1.5-flash",
+                "gemini-2.5-flash",
+                "gemini-3.1-flash-live",
             ]
             self.gemini_model = self._pick_gemini_model()
             logger.info(f"OCRService: Gemini initialized with model: {self.gemini_model}")

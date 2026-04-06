@@ -203,13 +203,26 @@ class SheetsService:
         try:
             if title == "Stock Register":
                 super_row = [
-                    "BILL INFO", "", "", "",
+                    "BILL INFO (A)", "", "BILL INFO (B)", "",
                     "PRODUCT DETAILS", "", "",
                     "QUANTITY / PACKAGING", "", "",
                     "ITEM FINANCIALS", "",
                     "BILL TOTALS", "", "", "",
                     "TRANSPORT", "",
                     "SYSTEM META", "", "", "", "", "", ""
+                ]
+                values = [super_row, schema]
+                range_target = f"{title}!1:2"
+            elif title == "Stock Movements":
+                super_row = [
+                    "EVENT CORE", "", "LOGISTICS CONTEXT", "", "", "", "",
+                    "TRACEABILITY IDS", "", "", "", ""
+                ]
+                values = [super_row, schema]
+                range_target = f"{title}!1:2"
+            elif title == "Stock Summary":
+                super_row = [
+                    "PRODUCT INFO", "", "LIVE INVENTORY", "", "VOLUME ACTIVITY", "", "SYSTEM INFO"
                 ]
                 values = [super_row, schema]
                 range_target = f"{title}!1:2"
@@ -252,14 +265,14 @@ class SheetsService:
             hdr_color  = _rgb("movements_header")
             tab_color  = {"red": 0.067, "green": 0.490, "blue": 0.440}
             col_widths = self.MOVEMENTS_COL_WIDTHS
-            freeze_cols = 1
-            frozen_rows = 1
+            freeze_cols = 2
+            frozen_rows = 2
         else:  # Stock Summary
             hdr_color  = _rgb("summary_header")
             tab_color  = {"red": 0.380, "green": 0.200, "blue": 0.600}
             col_widths = self.SUMMARY_COL_WIDTHS
             freeze_cols = 2
-            frozen_rows = 1
+            frozen_rows = 2
 
         num_cols = len(schema)
 
@@ -278,10 +291,19 @@ class SheetsService:
             }
         })
 
-        # ── 1.5 MERGE SUPER HEADERS (Stock Register) ──────────────────────────
-        if title == "Stock Register":
-            super_spans = [(0, 4), (4, 7), (7, 10), (10, 12), (12, 16), (16, 18), (18, 25)]
+        # ── 1.5 MERGE SUPER HEADERS ───────────────────────────────────────────
+        if title in ["Stock Register", "Stock Movements", "Stock Summary"]:
+            if title == "Stock Register":
+                super_spans = [(0, 2), (2, 4), (4, 7), (7, 10), (10, 12), (12, 16), (16, 18), (18, 25)]
+            elif title == "Stock Movements":
+                super_spans = [(0, 2), (2, 7), (7, 12)]
+            elif title == "Stock Summary":
+                super_spans = [(0, 2), (2, 4), (4, 6), (6, 7)]
+            else:
+                super_spans = []
+
             for start_col, end_col in super_spans:
+                if start_col >= end_col: continue
                 requests.append({
                     "mergeCells": {
                         "range": {
