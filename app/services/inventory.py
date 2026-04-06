@@ -76,14 +76,18 @@ class InventoryService:
                 doc_ref.update({'distributions': distributions})
 
     def find_by_dist_id(self, dist_id: str) -> Dict:
-        # Query Firestore for any record containing this dist_id in its distributions list
-        query = self.collection.where(
-            filter=FieldFilter('distributions', 'array_contains_any', [{'dist_id': dist_id}])
-        ).limit(1).get()
-        
-        # Fallback: Since Firestore array_contains with maps is complex, we use the searchable 'location_ids'
-        # or we just rely on the fact that scanning a POS code should still fetch the doc if we use a better index.
-        # IMPROVED: We'll use a collectionGroup or just search for the dist_id in the searchable tags.
+        """
+        Robust search for a stock item by its specific shelf/zone position ID.
+        Checks both the master Barcode ID and the nested Position ID.
+        """
+        # 1. Try direct Barcode ID lookup first (if user scanned a main label)
+        doc = self.collection.document(dist_id).get()
+        if doc.exists:
+            data = doc.to_dict()
+            # If it's a main ID, we return the first distribution as default
+            return {"item": data, "target_distribution": data.get('distributions', [None])[0]}
+
+        # 2. Try searching by distribution ID in location_ids (String array - reliably indexed)
         query = self.collection.where(filter=FieldFilter('location_ids', 'array_contains', dist_id)).limit(1).get()
         
         if query:
@@ -92,6 +96,8 @@ class InventoryService:
             # Find the specific distribution in the list
             target_dist = next((d for d in data.get('distributions', []) if d.get('dist_id') == dist_id), None)
             return {"item": data, "target_distribution": target_dist}
+            
+        print(f"⚠️ DISPATCH FAILED: Position {dist_id} not indexed in Firestore.")
         return {}
 
     @firestore.transactional
