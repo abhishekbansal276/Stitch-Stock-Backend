@@ -79,8 +79,8 @@ class OCRService:
                 if p in available_ids:
                     return p
         except Exception as e:
-            logger.warning(f"OCRService: Could not list Groq models: {e}. Defaulting to meta-llama/llama-4-scout-17b-16e-instruct")
-        return "meta-llama/llama-4-scout-17b-16e-instruct"
+            logger.warning(f"OCRService: Could not list Groq models: {e}. Defaulting to llama-3.2-11b-vision-preview")
+        return "llama-3.2-11b-vision-preview"
 
     # ─────────────────────────────────────────────────────────────────────────
 
@@ -205,17 +205,18 @@ class OCRService:
     def _handle_quota_error(self, e: Exception, attempt: int, max_retries: int, provider: str) -> Optional[int]:
         err_str = str(e).upper()
         if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
+            # Rotate immediately on 429 to try a different model in the next attempt
+            if provider == "Gemini":
+                self._rotate_gemini_model()
+            elif provider == "Groq":
+                self._rotate_groq_model()
+
             if attempt < max_retries - 1:
-                # Standard wait time for quota resets
                 wait = 16 
                 logger.warning(f"OCRService: ⚠️ {provider} Quota Exhausted. Waiting {wait}s before retry...")
                 return wait
             else:
                 logger.error(f"OCRService: 🛑 Quota limit reached for {provider}.")
-                if provider == "Gemini":
-                    self._rotate_gemini_model()
-                elif provider == "Groq":
-                    self._rotate_groq_model()
         return None
 
     def _rotate_gemini_model(self):
@@ -374,8 +375,9 @@ OUTPUT — Return ONLY this JSON. No explanation. No markdown fences.
     "Supplier GST": "...",
     "Vehicle Number": "...",
     "Transporter Name": "...",
+    "Sub Total": 0.0,
     "Transport / Freight": 0.0,
-    "Final Amount": 0.0
+    "Grand Total": 0.0
   },
   "items": [
     {
@@ -416,19 +418,15 @@ FIELD MAPPING — accept ANY of these label aliases
 
 ▸ Quantity Received: Quantity, Qty, Qty Received, Received Qty, Nos, Pcs, Pieces, Count, Number, No. of Units, Units Received, Total Qty, Dispatched Qty, Shipped Qty, Delivered Qty, Accepted Qty, Inspected Qty, Actual Qty, GRN Qty, Inward Qty, Received Quantity, Net Qty, Gross Qty, Billed Qty, Ordered Qty, Supply Qty, Qty Supplied, Qty Accepted, Qty Delivered, Volume, Amount of Goods...
 
-▸ Unit: UOM, Unit, Measure, MT, TO, T, KG, PCS, NOS, BAG, G, GM, LTR, L, ML, CFT, CBM, SQM, SQFT, RMT, RM, SET, PAIR, BOX, CTN, ROLL, DRUM, CAN, BUNDLE, SHEET, PLATE, MTR, FT, INCH, MM, CM, TON, QUINTAL, QTL, PACKET, PKT, POUCH, UNIT, NUMBER, GROSS, DOZEN, DZ, CASE, PALLET, SLAB, COIL, BAR, ROD, PIPE, LENGTH, EACH, EA, PC...
+▸ Unit (UOM): UOM, Unit, Measure, MT, Metric Tonne, Tonnes, TO, T, KG, Kilograms, Kgs, PCS, Pieces, NOS, Number, BAG, Bags, G, GM, LTR, L, ML, CFT, CBM, SQM, SQFT, RMT, RM, SET, PAIR, BOX, CTN, ROLL, DRUM, CAN, BUNDLE, SHEET, PLATE, MTR, FT, INCH, MM, CM, TON, QUINTAL, QTL, PACKET, PKT, POUCH, UNIT, NUMBER, GROSS, DOZEN, DZ, CASE, PALLET, SLAB, COIL, BAR, ROD, PIPE, LENGTH, EACH, EA, PC... **CRITICAL**: Do not confuse MT (Metric Ton) with KG (Kilograms).
 
-▸ Number of Bags: No. of Bags, Bags, Bag Count, Packs, Cartons, No. of Packs, Pack Count, No. of Cartons, Carton Count, No. of Bundles, Bundles, No. of Boxes, Boxes, No. of Drums, Drums, No. of Packets, Packets, No. of Rolls, Rolls, No. of Cases, Cases, No. of Pallets, Pallets, No. of Pieces, Bundle Count, Box Count, Sacks, No. of Sacks, Pouches, No. of Pouches, Lots, No. of Lots, Containers, Crates, No. of Crates, Bales, No. of Bales, Cans, Tins, Nos of Pkg...
+▸ Sub Total: Total Taxable Value, Sub-Total, Net Weight Total Value, Total before Tax, Pre-Tax Total, Basic Total, Assessed Value Total, Amount Before Tax...
 
-▸ Rate per Unit: Rate, Price, Unit Price, Price/UOM, Basic Rate, Rate per Kg, Rate per MT, Rate per Bag, Rate per Piece, Rate per Unit, Rate per Ltr, Unit Rate, Base Price, Basic Price, List Price, MRP, Selling Price, Purchase Price, Cost Price, Per Unit Cost, Price per Unit...
+▸ Transport / Freight: Freight Rate, Transport Rate, Freight Rs/Uom, Rs/MT, Rs/KG, Delivery Rate, Shipping Rate. **CRITICAL**: Extract the per-unit RATE (e.g. 500/MT) as a number. Do NOT extract the total freight amount.
 
-▸ Total Amount: Amount, Taxable Amount, Taxable Value, Sub Total, Value, Amount before Tax, Basic Amount, Gross Amount, Pre-Tax Amount, Assessable Value, Taxable Base, Total Value...
+▸ Grand Total: Grand Total, Invoice Total, Total Payable, Net Amount, Bill Value, Total Amount (if it includes tax), Net Total, Gross Total, Final Total, Total Amount Payable...
 
-▸ Transport / Freight: Freight, Transport, Transportation, Delivery Charges, Shipping, Cartage, Loading Charges, Freight Amount, Transport Amount, Handling Charges, Forwarding Charges...
-
-▸ Final Amount: Grand Total, Invoice Total, Total Payable, Net Amount, Bill Value, Total Amount (if it includes tax), Net Total, Gross Total, Final Total...
-
-▸ Taxes: List all individual tax components (IGST, CGST, SGST, Cess) separately. 
+▸ Taxes (IGST/CGST/SGST and more): List all individual tax components (IGST, CGST, SGST, Cess) separately. 
   Example: [{"label": "CGST", "amount": 12.50}, {"label": "SGST", "amount": 12.50}]
 
 ═══════════════════════════════════════
@@ -437,9 +435,11 @@ EXTRACTION_RULES
 1. STRICT JSON OUTPUT: Return ONLY valid JSON. No scratchpad, no explanations, no math operations inside the JSON values.
 2. ENHANCED TAX EXTRACTION: Individual tax components (CGST, SGST, IGST) are MANDATORY. Look in the summary table at the bottom if they are not in the line items.
 3. CHARACTER ACCURACY: Be extremely careful with numbers. '8' and '3' look similar; verify against calculations (Total = Qty * Rate). 
-4. NO REMARKS: Do not extract Remarks. This is for manual user input only.
-5. CLEAN NUMBERS: Strip currency symbols (₹, Rs) and remove commas.
-6. DATE NORMALISATION: Convert to YYYY-MM-DD.
+4. UNIT (UOM) ACCURACY: Be very precise with Units. Common units are MT (Metric Ton), KG, NOS, BAG, PCS. If the unit is MT, ensure it is not extracted as KG. Check the rate per unit to confirm (e.g. if rate is ~1,00,000, unit is likely MT not KG).
+5. FREIGHT RATE EXTRACTION: You MUST extract the the total freight amount payable into the "Transport / Freight" field, NOT the Freight RATE (Rs/UOM, Rs/MT, Rs/KG).
+6. NO REMARKS: Do not extract Remarks. This is for manual user input only.
+7. CLEAN NUMBERS: Strip currency symbols (₹, Rs) and remove commas.
+8. DATE NORMALISATION: Convert to YYYY-MM-DD.
 """
 
 ocr_service = OCRService()
