@@ -13,7 +13,7 @@ from groq import Groq
 from PIL import Image
 
 # ── OPTIMIZATION CONFIGURATION ──────────────────────────────────────────────
-MAX_IMAGE_DIMENSION = 1600
+MAX_IMAGE_DIMENSION = 1200
 JPEG_QUALITY = 80
 
 # ── LOGGING CONFIGURATION ───────────────────────────────────────────────────
@@ -65,8 +65,8 @@ class OCRService:
             
             self.gemini_client = genai.Client(api_key=self.gemini_key)
             self.preferred_gemini = [
-                "gemini-2.5-flash",
                 "gemini-2.0-flash",
+                "gemini-2.0-flash-exp",
                 "gemini-1.5-flash",
             ]
             self.gemini_model = self._pick_gemini_model()
@@ -443,13 +443,11 @@ class OCRService:
 # ── EXTRACTION PROMPT ─────────────────────────────────────────────────────────
 
 EXTRACTION_PROMPT = """
-You are an elite Inventory Auditor AI trained specifically on Indian supplier invoices,
-tax invoices, delivery challans, GRN documents, purchase orders, and e-way bills.
-Extract data with 100% accuracy. Think step by step before finalizing each value.
+Extract invoice data from the image into the specified JSON format.
+Ensure 100% accuracy for financial totals and product details.
+Consolidate identical product codes by summing quantities and joining batches.
 
-═══════════════════════════════════════════════════════════════════
-COMMAND — Return the data in the following standardized JSON format.
-═══════════════════════════════════════════════════════════════════
+COMMAND — Return the data in the following standardized JSON format:
 {
   "header": {
     "Date": "YYYY-MM-DD",

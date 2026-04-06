@@ -821,7 +821,7 @@ class SheetsService:
             return
         
         self.header_map = self._get_or_create_headers()
-        now = time.strftime("%Y-%m-%d %H:%M:%S")
+        now = self._get_now_ist()
         
         # ── 1. BULK LOOKUP ────────────────────────────────────────────────────
         try:
@@ -895,9 +895,9 @@ class SheetsService:
                     "values": [[old_reg_qty + qty]]
                 })
                 # Update "Updated At" and "Updated By"
-                upd_at_idx = h.get("Updated At", 22)
-                upd_by_idx = h.get("Updated By", 23)
-                col_range = f"{self._get_col_letter(upd_at_idx)}{row_idx}:{self._get_col_letter(upd_by_idx)}{row_idx}"
+                updates_at_idx = h.get("Updated At", 23)
+                updates_by_idx = h.get("Updated By", 24)
+                col_range = f"{self._get_col_letter(updates_at_idx)}{row_idx}:{self._get_col_letter(updates_by_idx)}{row_idx}"
                 updates_batch.append({
                     "range": f"Stock Register!{col_range}",
                     "values": [[now, user_email]]
@@ -997,7 +997,7 @@ class SheetsService:
                      warehouse_id: str = "N/A", item_name: str = "Audit Item"):
         if not self.service:
             return
-        now = time.strftime("%Y-%m-%d %H:%M:%S")
+        now = self._get_now_ist()
         row = [
             now, item_name, move_type, qty, warehouse, location, user_email,
             f"MOV-{str(uuid.uuid4())[:6].upper()}", barcode_id,
@@ -1138,6 +1138,12 @@ class SheetsService:
 
     def get_current_headers(self) -> List[str]:
         return self.BASE_SCHEMA
+
+    def _get_now_ist(self) -> str:
+        """Returns current time in Indian Standard Time (UTC+5:30)."""
+        # Manual offset for IST (5 hours 30 mins = 19800 seconds)
+        ist_now = datetime.utcnow() + timedelta(hours=5, minutes=30)
+        return ist_now.strftime("%Y-%m-%d %H:%M:%S")
 
     # ── LOW-LEVEL HELPERS ─────────────────────────────────────────────────────
 
