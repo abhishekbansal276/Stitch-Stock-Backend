@@ -322,8 +322,7 @@ OUTPUT — Return ONLY this JSON. No explanation. No markdown fences.
     "Supplier Name": "...",
     "Supplier GST": "...",
     "Vehicle Number": "...",
-    "Transporter Name": "...",
-    "Transport / Freight": 0.0
+    "Transporter Name": "..."
   },
   "items": [
     {
@@ -339,8 +338,7 @@ OUTPUT — Return ONLY this JSON. No explanation. No markdown fences.
       "Taxes": [
         { "label": "CGST", "amount": 0.0 },
         { "label": "SGST", "amount": 0.0 }
-      ],
-      "Remarks": "..."
+      ]
     }
   ]
 }
@@ -359,8 +357,6 @@ FIELD MAPPING — accept ANY of these label aliases
 
 ▸ Vehicle Number: Vehicle No, Veh. No, Truck No, RC No, Registration Number, Reg No, Transport No, Lorry No, Lorry Number, Truck Number, Tempo No, Vehicle Registration, Vehicle Reg No, Tractor No, Tanker No, Container No, Fleet No, Conveyance No, Carrier No, Car No, Auto No, Van No, LCV No, HCV No, Transport Vehicle No...
 
-▸ Transport / Freight: Freight, Transport Charges, Cartage, Delivery Charges, Freight Charges, Carriage, Carriage Inward, Carriage Outward, Forwarding Charges, Handling Charges, Loading Charges, Unloading Charges, Logistics Charges, Shipping Charges, Courier Charges, Packing & Forwarding, P&F Charges, Octroi, Entry Tax, Toll Charges, Transit Charges, Conveyance Charges, Drayage, Porterage, Haulage, Godown Charges, Demurrage, Transportation Cost, Freight & Cartage, LR Charges, Dispatch Charges...
-
 ▸ Product Code: Product Code, Item Code, Part No, SKU, HSN, Article No, Model No, Part Number, Item No, Item Number, Material Code, Material No, Cat No, Catalogue No, Catalogue Number, Stock Code, Stock No, Reference Code, Ref Code, Product ID, Item ID, BOM Code, Component Code, HSN Code, SAC Code, HSN/SAC, UPC Code, EAN Code, ASIN, Internal Code, System Code, Drawing No, Specification No, Grade Code, Variant Code...
 
 ▸ Product Name: Description, Description of Goods, Product Name, Material, Item Description, Item Name, Product Description, Goods Description, Particulars, Commodity, Article, Material Description, Name of Product, Name of Goods, Name of Item, Material Name, Commodity Name, Subject, Nature of Goods, Details, Specification, Product Details, Item Particulars, Goods, Stock Item, Service Description, Nature of Supply, Category, Product Title, Brand Name, Short Description, Full Description...
@@ -369,24 +365,24 @@ FIELD MAPPING — accept ANY of these label aliases
 
 ▸ Unit: UOM, Unit, Measure, MT, TO, T, KG, PCS, NOS, BAG, G, GM, LTR, L, ML, CFT, CBM, SQM, SQFT, RMT, RM, SET, PAIR, BOX, CTN, ROLL, DRUM, CAN, BUNDLE, SHEET, PLATE, MTR, FT, INCH, MM, CM, TON, QUINTAL, QTL, PACKET, PKT, POUCH, UNIT, NUMBER, GROSS, DOZEN, DZ, CASE, PALLET, SLAB, COIL, BAR, ROD, PIPE, LENGTH, EACH, EA, PC...
 
-▸ Number of Bags: No. of Bags, Bags, Bag Count, Packs, Cartons, No. of Packs, Pack Count, No. of Cartons, Carton Count, No. of Bundles, Bundles, No. of Boxes, Boxes, No. of Drums, Drums, No. of Packets, Packets, No. of Rolls, Rolls, No. of Cases, Cases, No. of Pallets, Pallets, No. of Pieces, Bundle Count, Box Count, Sacks, No. of Sacks, Pouches, No. of Pouches, Lots, No. of Lots, Containers, Crates, No. of Crates, Bales, No. of Bales, Cans, Tins, Nos of Pkg, Pkg Count, Total Packages, Total Packs...
+▸ Number of Bags: No. of Bags, Bags, Bag Count, Packs, Cartons, No. of Packs, Pack Count, No. of Cartons, Carton Count, No. of Bundles, Bundles, No. of Boxes, Boxes, No. of Drums, Drums, No. of Packets, Packets, No. of Rolls, Rolls, No. of Cases, Cases, No. of Pallets, Pallets, No. of Pieces, Bundle Count, Box Count, Sacks, No. of Sacks, Pouches, No. of Pouches, Lots, No. of Lots, Containers, Crates, No. of Crates, Bales, No. of Bales, Cans, Tins, Nos of Pkg...
 
-▸ Rate per Unit: Rate, Price, Unit Price, Price/UOM, Basic Rate, Rate per Kg, Rate per MT, Rate per Bag, Rate per Piece, Rate per Unit, Rate per Ltr, Unit Rate, Base Price, Basic Price, List Price, MRP, Selling Price, Purchase Price, Cost Price, Per Unit Cost, Price per Unit, Price per Piece, Price per Kg, Ex-Factory Rate, Ex-Works Rate, Landing Rate, Net Rate, Agreed Rate, Contract Rate, Standard Rate, Market Rate, Quote Rate, Quoted Price, Offer Rate, Rate (Excl. Tax), Rate (Incl. Tax)...
+▸ Rate per Unit: Rate, Price, Unit Price, Price/UOM, Basic Rate, Rate per Kg, Rate per MT, Rate per Bag, Rate per Piece, Rate per Unit, Rate per Ltr, Unit Rate, Base Price, Basic Price, List Price, MRP, Selling Price, Purchase Price, Cost Price, Per Unit Cost, Price per Unit...
 
-▸ Total Amount: Amount, Taxable Amount, Taxable Value, Sub Total, Value, Amount before Tax, Basic Amount, Gross Amount, Pre-Tax Amount, Assessable Value, Taxable Base, Total Value, Chargeable Amount, Billed Amount, Invoice Amount, Merchandise Value, Commodity Value, Goods Value, Product Value, Line Total, Line Amount, Net Value, Subtotal, Total Before Tax, Total Before GST, Amount (Excl. GST), Ex-Tax Amount, Before Tax Total, Tax Base Amount, Material Value, Supply Value...
+▸ Total Amount: Amount, Taxable Amount, Taxable Value, Sub Total, Value, Amount before Tax, Basic Amount, Gross Amount, Pre-Tax Amount, Assessable Value, Taxable Base, Total Value...
 
 ▸ Taxes: List all individual tax components (IGST, CGST, SGST, Cess) separately. 
   Example: [{"label": "CGST", "amount": 12.50}, {"label": "SGST", "amount": 12.50}]
 
-▸ Remarks: Remarks, Notes, Handwritten or stamped annotations, Comments, Observations, Narration, Description, Additional Notes, Special Instructions, Note, Memo, Annotation, Instructions, Terms, Conditions, Terms & Conditions, Delivery Terms, Payment Terms, Special Notes, Additional Comments, Internal Notes, Buyer Notes, Seller Notes, Dispatch Remarks, Quality Remarks, Inspection Notes, QC Remarks, Return Remarks, Rejection Remarks, Shortage Remarks, Damage Remarks, Excess Remarks, GRN Remarks, PO Remarks, Adjustment Notes, Disclaimer, Declaration, Clarification, Free Text, Other Details, Extra Info, Addendum...
-
 ═══════════════════════════════════════
-EXTRACTION RULES
+EXTRACTION_RULES
 ═══════════════════════════════════════
 1. NO FINAL AMOUNT EXTRACTION: Do not return a Final Amount field in the JSON. Extract Total Amount and individual Taxes only.
-2. SCAN THE ENTIRE DOCUMENT: Taxes are often listed at the line item level OR in the summary section.
-3. CLEAN NUMBERS: Strip currency symbols (₹, Rs) and remove commas. (e.g. "1,234.00" -> 1234.00).
-4. DATE NORMALISATION: Convert to YYYY-MM-DD.
+2. ENHANCED TAX EXTRACTION: Individual tax components (CGST, SGST, IGST) are MANDATORY. Look in the summary table at the bottom if they are not in the line items.
+3. CHARACTER ACCURACY: Be extremely careful with numbers. '8' and '3' look similar; verify against calculations (Total = Qty * Rate). 
+4. NO FREIGHT/REMARKS: Do not extract Transport/Freight or Remarks. These are for user input only.
+5. CLEAN NUMBERS: Strip currency symbols (₹, Rs) and remove commas.
+6. DATE NORMALISATION: Convert to YYYY-MM-DD.
 """
 
 ocr_service = OCRService()
