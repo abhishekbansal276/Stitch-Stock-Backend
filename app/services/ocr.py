@@ -33,7 +33,9 @@ class OCRService:
             self.gemini_client = genai.Client(api_key=self.gemini_key)
             self.preferred_gemini = [
                 "gemini-2.0-flash",
+                "gemini-1.5-flash-latest",
                 "gemini-1.5-flash",
+                "gemini-1.5-flash-002",
             ]
             self.gemini_model = self._pick_gemini_model()
             logger.info(f"OCRService: Gemini initialized with model: {self.gemini_model}")
@@ -49,6 +51,8 @@ class OCRService:
             try:
                 self.groq_client = Groq(api_key=self.groq_key)
                 self.preferred_groq = [
+                    "llama-3.2-11b-vision-preview",
+                    "llama-3.2-90b-vision-preview",
                     "meta-llama/llama-4-scout-17b-16e-instruct",
                 ]
                 self.groq_model = self._pick_groq_model()
@@ -59,6 +63,7 @@ class OCRService:
         else:
             logger.info("OCRService: GROQ_API_KEY not found. Groq fallback disabled.")
             self.groq_client = None
+            self.groq_model = None
 
     def _pick_gemini_model(self) -> str:
         try:
@@ -69,7 +74,7 @@ class OCRService:
                     return p
         except Exception as e:
             logger.warning(f"OCRService: Could not list Gemini models: {e}. Defaulting to gemini-2.0-flash")
-        return "gemini-2.0-flash"
+        return self.preferred_gemini[0]
 
     def _pick_groq_model(self) -> str:
         try:
@@ -79,8 +84,8 @@ class OCRService:
                 if p in available_ids:
                     return p
         except Exception as e:
-            logger.warning(f"OCRService: Could not list Groq models: {e}. Defaulting to meta-llama/llama-4-scout-17b-16e-instruct")
-        return "meta-llama/llama-4-scout-17b-16e-instruct"
+            logger.warning(f"OCRService: Could not list Groq models: {e}. Defaulting to llama-3.2-11b-vision-preview")
+        return self.preferred_groq[0]
 
     # ─────────────────────────────────────────────────────────────────────────
 
@@ -161,8 +166,21 @@ class OCRService:
                 )
                 return self._clean_and_parse(response.text.strip())
             except Exception as e:
+                # Fast Fallback: If it's a 404 or first 429, don't wait too long if we have alternatives
+                err_str = str(e).lower()
+                is_quota = "429" in err_str or "resource_exhausted" in err_str
+                is_not_found = "404" in err_str
+                
+                if is_not_found:
+                    logger.warning(f"OCRService: Gemini model {self.gemini_model} not found (404). Rotating...")
+                    self._rotate_gemini_model()
+                    if attempt < max_retries - 1: continue
+                    raise e
+
                 wait_time = self._handle_quota_error(e, attempt, max_retries, provider="Gemini")
                 if wait_time:
+                    # If it's the first attempt and we have Groq, maybe just fail-over instead of waiting 16s?
+                    # For now, we'll keep the wait but make it shorter for Gemini rotation
                     time.sleep(wait_time)
                     continue
                 raise e
@@ -213,8 +231,9 @@ class OCRService:
                 self._rotate_groq_model()
 
             if attempt < max_retries - 1:
-                wait = 16 
-                logger.warning(f"OCRService: ⚠️ {provider} Quota Exhausted. Waiting {wait}s before retry...")
+                # Fast Fallback: Use a shorter wait (2s) for internal provider rotation
+                wait = 2 
+                logger.warning(f"OCRService: ⚠️ {provider} Quota Exhausted. Rotating and retrying in {wait}s...")
                 return wait
             else:
                 logger.error(f"OCRService: 🛑 Quota limit reached for {provider}.")
