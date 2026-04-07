@@ -146,38 +146,6 @@ class OCRService:
         mime_type = mime_map[ext]
         logger.info(f"OCRService: Processing '{filename}' ({mime_type})")
 
-        # --- LOCAL CACHING LAYER (3-HOUR SLIDING EXPIRY) ---
-        file_hash = hashlib.md5(content).hexdigest()
-        cache_dir = os.path.join(os.getcwd(), ".ocr_cache")
-        cache_path = os.path.join(cache_dir, f"{file_hash}.json")
-        
-        if not os.path.exists(cache_dir):
-            os.makedirs(cache_dir, exist_ok=True)
-
-        try:
-            if os.path.exists(cache_path):
-                with open(cache_path, "r", encoding="utf-8") as f:
-                    cache_data = json.load(f)
-                
-                expires_at = cache_data.get("expires_at")
-                # Check if still valid
-                if expires_at and datetime.fromisoformat(expires_at) > datetime.now():
-                    logger.info(f"🚀 [LOCAL CACHE HIT] Reusing data for {filename} (Hash: {file_hash})")
-                    print(f"✨ LOCAL CACHE HIT: Resetting 3h timeline for {file_hash}")
-                    
-                    # RESET CACHE TIMELINE (Next 3 hours)
-                    new_expiry = (datetime.now() + timedelta(hours=3)).isoformat()
-                    cache_data["expires_at"] = new_expiry
-                    with open(cache_path, "w", encoding="utf-8") as f:
-                        json.dump(cache_data, f)
-                    
-                    return cache_data["data"]
-                else:
-                    logger.info(f"🗑️ [CACHE EXPIRED] Deleting stale cache for {filename}")
-                    os.remove(cache_path)
-        except Exception as cache_err:
-            logger.warning(f"OCRService: Local cache check failed: {cache_err}")
-
         # --- OPTIMIZATION STEP ---
         try:
             content, mime_type = self._optimize_image(content, mime_type)
@@ -189,8 +157,6 @@ class OCRService:
             try:
                 res = self._run_gemini_vision(content, mime_type)
                 final_res = self._post_process_results(res)
-                # Store in cache before returning
-                self._store_in_cache(file_hash, final_res)
                 return final_res
             except Exception as e:
                 logger.warning(f"OCRService: Stage 1 (Gemini Vision) failed: {e}")
@@ -204,8 +170,6 @@ class OCRService:
             try:
                 res = self._run_groq_vision(content, mime_type)
                 final_res = self._post_process_results(res)
-                # Store in cache before returning
-                self._store_in_cache(file_hash, final_res)
                 return final_res
             except Exception as e:
                 logger.error(f"OCRService: Stage 2 (Groq Vision) failed: {e}")
@@ -215,35 +179,10 @@ class OCRService:
                     self._rotate_groq_model()
                     res = self._run_groq_vision(content, mime_type)
                     final_res = self._post_process_results(res)
-                    self._store_in_cache(file_hash, final_res)
                     return final_res
                 raise Exception(f"Total extraction failure across all vision providers: {e}")
 
         raise Exception("OCRService: Extraction failed. No working Vision clients available.")
-
-    def _store_in_cache(self, file_hash: str, data: Dict):
-        """Helper to persist results locally with a 3-hour TTL."""
-        try:
-            cache_dir = os.path.join(os.getcwd(), ".ocr_cache")
-            if not os.path.exists(cache_dir):
-                os.makedirs(cache_dir, exist_ok=True)
-                
-            cache_path = os.path.join(cache_dir, f"{file_hash}.json")
-            expiry = (datetime.now() + timedelta(hours=3)).isoformat()
-            
-            payload = {
-                "hash": file_hash,
-                "data": data,
-                "created_at": datetime.now().isoformat(),
-                "expires_at": expiry
-            }
-            
-            with open(cache_path, "w", encoding="utf-8") as f:
-                json.dump(payload, f)
-                
-            logger.info(f"💾 [LOCAL CACHE STORE] Saved extraction for key {file_hash}")
-        except Exception as e:
-            logger.error(f"OCRService: Failed to store local cache: {e}")
 
     # ── INDIVIDUAL STAGE RUNNERS ──────────────────────────────────────────────
 
