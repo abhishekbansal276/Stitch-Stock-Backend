@@ -172,21 +172,27 @@ async def create_stock(
         merge_on = payload.get('merge_mode', False)
         final_merged = {}
         for item in items:
-            p_code = str(item.get('Product Code') or 'UKN').replace(" ", "").upper()
             batch  = str(item.get('Batch Number') or 'NB').replace(" ", "").upper()
             
             # IDENTITY DEFINITION: Merged means 1 Per Product. Non-merged means 1 Per Batch.
             group_key = p_code if merge_on else f"{p_code}-{batch}"
             item_id = generate_12_digit_hash(group_key)
             
+            # BATCH SYNC: Ensure distributions carry the parent batch number
+            item_dists = item.get('distributions', [])
+            for d in item_dists:
+                if not d.get('batch_number'):
+                    d['batch_number'] = batch
+            
             if item_id not in final_merged:
                 item['id'] = item_id
                 item['barcode_id'] = item_id
                 item['is_merged'] = merge_on
+                item['distributions'] = item_dists
                 final_merged[item_id] = item
             else:
                 base = final_merged[item_id]
-                base['distributions'] = list(base.get('distributions', [])) + list(item.get('distributions', []))
+                base['distributions'] = list(base.get('distributions', [])) + list(item_dists)
                 # Aggregate counts
                 try:
                     q1 = float(base.get('Quantity Received', 0))

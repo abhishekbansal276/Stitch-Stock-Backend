@@ -21,11 +21,15 @@ class InventoryService:
         UPGRADED: One Doc per Product/Batch.
         Instead of using barcode_id as DocID, we query for existing doc first.
         """
-        # ── 1. FIND TARGET DOCUMENT ──
+        # ── 1. NORMALIZE METADATA ──
+        batch_number = str(batch_number or 'NB').strip().upper() if batch_number else 'NB'
+        if batch_number == "": batch_number = 'NB'
+        
+        # FIND TARGET DOCUMENT...
         query = self.collection.where(filter=FieldFilter('product_code', '==', product_code))
         
         # If not merged, we are batch-specific. If merged, we aggregate ALL of this product.
-        if not is_merged and batch_number:
+        if not is_merged and batch_number and batch_number != 'NB':
             query = query.where(filter=FieldFilter('batch_number', '==', batch_number))
         elif is_merged:
             query = query.where(filter=FieldFilter('batch_number', '==', 'AGGREGATED'))
@@ -38,40 +42,45 @@ class InventoryService:
         if docs:
             doc_ref = docs[0].reference
             existing_data = docs[0].to_dict()
-            print(f"📦 UPSERT: Found existing document for {product_code} ({doc_ref.id})")
         else:
-            # Create new doc with AUTO-ID 🚀
             doc_ref = self.collection.document() # Firestore auto-id
-            print(f"🆕 UPSERT: Creating new document for {product_code} ({doc_ref.id})")
 
-        # ── 2. PREPARE DISTRIBUTIONS ──
+        # ── 2. PREPARE & MERGE DISTRIBUTIONS ──
         current_dists = existing_data.get('distributions', [])
         
-        # Ensure new dists have traceable IDs
-        for d in distributions:
-            if not d.get('dist_id') or d.get('dist_id') == 'AUTO':
-                seed = f"{barcode_id}-{d.get('warehouse')}-{d.get('location')}"
-                d['dist_id'] = generate_12_digit_hash(seed)
-            if not d.get('batch_number'):
-                d['batch_number'] = batch_number or 'NB'
-        
-        # MERGE LOGIC: If a location (warehouse + location_name) already exists, add to its qty
+        # MERGE LOGIC: Combine incoming distributions with existing ones
         merged_dists = current_dists.copy()
         for new_d in distributions:
+            # Ensure incoming dist has an ID and a local batch reference
+            if not new_d.get('dist_id') or new_d.get('dist_id') == 'AUTO':
+                seed = f"{barcode_id}-{new_d.get('warehouse')}-{new_d.get('location')}"
+                new_d['dist_id'] = generate_12_digit_hash(seed)
+            
+            # If the incoming distribution doesn't have a batch, use the parent one
+            if not new_d.get('batch_number') or str(new_d['batch_number']).strip() == "":
+                new_d['batch_number'] = batch_number
+
             found_idx = -1
             for idx, old_d in enumerate(merged_dists):
                 if old_d.get('warehouse') == new_d.get('warehouse') and \
-                   old_d.get('location') == new_d.get('location'):
+                   old_d.get('location') == new_d.get('location') and \
+                   old_d.get('batch_number') == new_d.get('batch_number'): # MATCH PER BATCH POSITION
                     found_idx = idx
                     break
             
             if found_idx >= 0:
                 merged_dists[found_idx]['qty'] = float(merged_dists[found_idx].get('qty', 0)) + float(new_d.get('qty', 0))
-                # Also aggregate bags if applicable
                 if 'bags' in new_d:
-                    merged_dists[found_idx]['bags'] = int(merged_dists[found_idx].get('bags', 0)) + int(new_d.get('bags', 0))
+                    old_bags = merged_dists[found_idx].get('bags', 0)
+                    new_bags = new_d.get('bags', 0)
+                    merged_dists[found_idx]['bags'] = int(old_bags) + int(new_bags)
             else:
                 merged_dists.append(new_d)
+
+        # ── 3. FINAL AUDIT: Ensure NO empty batch numbers survive ──
+        for d in merged_dists:
+            if not d.get('batch_number') or str(d['batch_number']).strip() == "":
+                d['batch_number'] = batch_number or 'NB'
 
         # ── 3. FINALIZE DATA ──
         total_qty = sum(float(d.get('qty', 0)) for d in merged_dists)

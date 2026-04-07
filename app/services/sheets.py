@@ -913,15 +913,15 @@ class SheetsService:
             
             # Index for fast search - ONLY barcode matches are updates to existing ledger rows
             existing_reg_barcode = {str(r[b_id_idx]).strip(): i+1 for i, r in enumerate(reg_rows) if len(r) > b_id_idx}
-            summary_idx          = {str(r[1]).strip().upper(): i+1 for i, r in enumerate(sum_rows) if len(r) > 1}
+            summary_idx          = {self._normalize_code(r[1]): i+1 for i, r in enumerate(sum_rows) if len(r) > 1}
             
             # Cache summary data in memory for accumulation
             summary_data_map = {}
             for i, r in enumerate(sum_rows):
                 if i == 0: continue # SKIP HEADER
                 if len(r) >= 2:
-                    code_key = str(r[1]).strip().upper()
-                    if code_key and code_key != "PRODUCT CODE" and code_key not in summary_data_map:
+                    code_key = self._normalize_code(r[1])
+                    if code_key and code_key not in summary_data_map:
                         summary_data_map[code_key] = {
                             "row": i + 1,
                             "name": r[0],
@@ -1045,24 +1045,26 @@ class SheetsService:
         # changes for this session by Product Code first.
         session_summary_map = {} # code_key: {name, code, qty, unit, row_idx}
         for item in items:
-            code = str(item.get("Product Code") or "").strip().upper()
-            if not code: continue
+            raw_code = item.get("Product Code") or item.get("code") or ""
+            code_key = self._normalize_code(raw_code)
+            if not code_key: continue
             
-            qty = self._to_float(item.get("Quantity Received") or 0)
-            name = item.get("Product Name") or "Item"
-            unit = item.get("Unit") or "PCS"
+            i_qty = self._to_float(item.get("Quantity Received") or item.get("qty") or 0)
+            i_bags = self._to_float(item.get("Number of Bags") or item.get("bags") or 0)
+            i_name = item.get("Product Name") or item.get("name") or "Item"
+            i_unit = item.get("Unit") or item.get("unit") or "PCS"
             
-            if code not in session_summary_map:
-                session_summary_map[code] = {"name": name, "code": code, "qty": 0.0, "bags": 0.0, "unit": unit}
-            session_summary_map[code]["qty"] += qty
-            session_summary_map[code]["bags"] += bags
+            if code_key not in session_summary_map:
+                session_summary_map[code_key] = {"name": i_name, "code": raw_code, "qty": 0.0, "bags": 0.0, "unit": i_unit}
+            session_summary_map[code_key]["qty"] += i_qty
+            session_summary_map[code_key]["bags"] += i_bags
 
         for code_key, session_data in session_summary_map.items():
             qty = session_data["qty"]
             bags = session_data["bags"]
             name = session_data["name"]
             unit = session_data["unit"]
-            code = session_data["code"]
+            code = session_data["code"]  # Keep original casing for new rows
 
             s_entry = summary_data_map.get(code_key)
             if s_entry:
