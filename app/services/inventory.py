@@ -14,7 +14,8 @@ class InventoryService:
     def save_position(self, barcode_id: str, product_name: str, product_code: str, 
                       unit: str, distributions: List[Dict], 
                       supplier_name: str = None, batch_number: str = None,
-                      storage_type: str = "UNIT", number_of_bags: int = 0):
+                      storage_type: str = "UNIT", number_of_bags: int = 0,
+                      user_name: str = "System"):
         """
         Stores the spatial distribution of a stock item in Firestore.
         distributions: [{'warehouse': 'DC1', 'location': 'Row 7', 'qty': 10, 'dist_id': 'UID'}, ...]
@@ -53,6 +54,8 @@ class InventoryService:
             'batch_number': batch_number,
             'storage_type': storage_type,
             'number_of_bags': number_of_bags,
+            'created_by': user_name,
+            'updated_by': user_name,
             'updated_at': int(time.time())
         }
         doc_ref.set(doc_data)
@@ -196,9 +199,11 @@ class InventoryService:
                 barcode_id=barcode_id,
                 qty=qty,
                 bags_removed=bags_removed,
-                warehouse=dist.get('warehouse', 'N/A'),
-                location=dist.get('location', 'N/A'),
-                user_display=user_display
+                warehouse=dist.get('warehouse', 'Main Floor'),
+                location=dist.get('location', 'General'),
+                user_display=user_display,
+                dist_id=loc_id,
+                warehouse_id=dist.get('warehouse_id', 'default')
             )
         except Exception as e:
             print(f"⚠️ Sheets Sync Failed (Dispatch): {e}")

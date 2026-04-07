@@ -862,7 +862,7 @@ class SheetsService:
     # ── STOCK WRITE ───────────────────────────────────────────────────────────
 
     def save_stock_batch(self, header: Dict, items: List[Dict],
-                         item_ids: List[str], user_email: str):
+                         item_ids: List[str], user_display: str):
         """
         Ingest a batch of items with extreme efficiency:
         1. Single batchGet for Register & Summary lookups.
@@ -955,7 +955,7 @@ class SheetsService:
                 col_range = f"{self._get_col_letter(updates_at_idx)}{row_idx}:{self._get_col_letter(updates_by_idx)}{row_idx}"
                 updates_batch.append({
                     "range": f"Stock Register!{col_range}",
-                    "values": [[now, user_email]]
+                    "values": [[now, user_display]]
                 })
             else:
                 # Prepare Append for New Row
@@ -971,9 +971,9 @@ class SheetsService:
                 # Metadata
                 row_data[h["Barcode ID"]] = item_id
                 row_data[h["Created At"]] = now
-                row_data[h["Created By"]] = user_email
+                row_data[h["Created By"]] = user_display
                 row_data[h["Updated At"]] = now
-                row_data[h["Updated By"]] = user_email
+                row_data[h["Updated By"]] = user_display
                 
                 # Dynamic mapping for everything else
                 for col_name in self.BASE_SCHEMA:
@@ -994,12 +994,16 @@ class SheetsService:
             distributions = item.get("distributions", [])
             
             if not distributions:
-                movements_append.append([now, name, "IN", qty, "Main Warehouse", "Full Receive", user_email, f"MOV-{uuid.uuid4().hex[:6].upper()}", item_id, trans_id, "N/A", "N/A"])
+                # Default distribution (Whole Unit)
+                movements_append.append([now, name, "IN", qty, "Main Warehouse", "Full Receive", user_display, f"MOV-{uuid.uuid4().hex[:6].upper()}", item_id, trans_id, item_id, "default"])
             else:
                 for dist in distributions:
                     d_qty = self._to_float(dist.get("qty", 0))
                     d_loc = dist.get("location", "Main Floor")
-                    movements_append.append([now, name, "IN", d_qty, "Main Warehouse", d_loc, user_email, f"MOV-{uuid.uuid4().hex[:6].upper()}", item_id, trans_id, "N/A", "N/A"])
+                    d_wh  = dist.get("warehouse", "Main Warehouse")
+                    d_id  = dist.get("dist_id") or item_id
+                    wh_id = dist.get("warehouse_id") or "default"
+                    movements_append.append([now, name, "IN", d_qty, d_wh, d_loc, user_display, f"MOV-{uuid.uuid4().hex[:6].upper()}", item_id, trans_id, d_id, wh_id])
 
             # ── C. Summary Update ──
             code_key = code.upper()
@@ -1040,24 +1044,24 @@ class SheetsService:
             print(f"Sheets Execution Error: {e}")
             traceback.print_exc()
 
-    def sync_batch_to_ledger(self, items: List[Dict], user_email: str) -> bool:
+    def sync_batch_to_ledger(self, items: List[Dict], user_display: str) -> bool:
         try:
             item_ids = [item.get("id") or item.get("Barcode ID") for item in items]
-            self.save_stock_batch({}, items, item_ids, user_email)
+            self.save_stock_batch({}, items, item_ids, user_display)
             return True
         except Exception as e:
             print(f"Sheets Sync Error: {e}")
             return False
 
     def add_movement(self, barcode_id: str, trans_id: str, move_type: str,
-                     qty: float, user_email: str, warehouse: str = "Main Warehouse",
-                     location: str = "Full Receive", dist_id: str = "N/A",
-                     warehouse_id: str = "N/A", item_name: str = "Audit Item"):
+                     qty: float, user_display: str, warehouse: str = "Main Warehouse",
+                     location: str = "Full Receive", dist_id: str = "default",
+                     warehouse_id: str = "default", item_name: str = "Audit Item"):
         if not self.service:
             return
         now = self._get_now_ist()
         row = [
-            now, item_name, move_type, qty, warehouse, location, user_email,
+            now, item_name, move_type, qty, warehouse, location, user_display,
             f"MOV-{str(uuid.uuid4())[:6].upper()}", barcode_id,
             trans_id, dist_id, warehouse_id,
         ]
@@ -1197,7 +1201,7 @@ class SheetsService:
     def get_current_headers(self) -> List[str]:
         return self.BASE_SCHEMA
 
-    def record_dispatch(self, barcode_id: str, qty: float, bags_removed: float = 0, warehouse: str = "", location: str = "", user_display: str = "System"):
+    def record_dispatch(self, barcode_id: str, qty: float, bags_removed: float = 0, warehouse: str = "", location: str = "", user_display: str = "System", dist_id: str = "default", warehouse_id: str = "default"):
         """
         Deducts stock from the spreadsheet ledger and records the movement.
         """
@@ -1253,7 +1257,7 @@ class SheetsService:
             
             movement_row = [
                 self._get_now_ist(), p_name, "OUT", qty, warehouse, location, user_display,
-                f"MOV-{int(time.time())}", barcode_id, "", "", ""
+                f"MOV-{int(time.time())}", barcode_id, f"DISP-{uuid.uuid4().hex[:4].upper()}", dist_id, warehouse_id
             ]
             self._append_row("Stock Movements", movement_row)
 

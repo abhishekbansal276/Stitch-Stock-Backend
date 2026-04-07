@@ -61,7 +61,7 @@ async def _automated_sync_reaper():
 async def _process_single_sync(doc_id: str, data: Dict):
     """Internal helper to sync a single Firestore doc to Drive and Sheets."""
     try:
-        user_email = data.get("created_by", "system@reaper.auto")
+        user_display = data.get("created_by", "system@reaper.auto")
         label = f"{data.get('product_name', 'Item')} - {data.get('warehouse', 'WH')}"
         
         # 1. ARCHIVE BARCODE (to Drive)
@@ -76,7 +76,7 @@ async def _process_single_sync(doc_id: str, data: Dict):
         # 2. SYNC TO SHEETS
         # Prepare item for SheetsService
         sheets_item = {**data, "id": doc_id, "barcode_link": link}
-        success = sheets_service.sync_batch_to_ledger([sheets_item], user_email)
+        success = sheets_service.sync_batch_to_ledger([sheets_item], user_display)
         
         # 3. UPDATE STATUS
         if success:
@@ -131,8 +131,8 @@ async def extract_stock(
     Upload a PDF or Image and get extracted JSON data.
     """
     start_time = time.time()
-    user_email = user.get('email', 'Unknown')
-    print(f"\n--- EXTRACTION START [User: {user_email}] ---")
+    user_display = user.get('email', 'Unknown')
+    print(f"\n--- EXTRACTION START [User: {user_display}] ---")
     
     try:
         content = await file.read()
@@ -238,9 +238,10 @@ async def _process_async_ingestion(header: dict, items: list, item_ids: list, us
                         item_data.get('Unit', 'PCS'),
                         distributions,
                         supplier_name=header.get('Supplier Name'),
-                        batch_number=item_data.get('Batch Number'),
+                        batch_number=item_data.get('batch_number') or item_data.get('Batch Number'),
                         storage_type=item_data.get('storage_type', 'UNIT'),
-                        number_of_bags=item_data.get('Number of Bags', 0)
+                        number_of_bags=item_data.get('number_of_bags') or item_data.get('Number of Bags', 0),
+                        user_name=user_display
                     )
                 
                 # MARK AS SYNCED ✅
@@ -477,7 +478,7 @@ async def get_items_by_zone(loc_id: str, user: dict = Depends(get_current_user))
 async def transfer_stock_position(req: StockTransferRequest, user: dict = Depends(get_current_user)):
     """Operation: Atomically moves stock between zones with audit trail."""
     try:
-        user_email = user['email']
+        user_display = user['email']
         
         # 0. Fetch Item details for rich logging
         item = sheets_service.get_stock_item(req.barcode_id)
@@ -497,7 +498,7 @@ async def transfer_stock_position(req: StockTransferRequest, user: dict = Depend
             req.reason or "WMS-TRANSFER", 
             "TRANSFER", 
             req.quantity, 
-            user_email,
+            user_display,
             location=loc_audit
         )
         
