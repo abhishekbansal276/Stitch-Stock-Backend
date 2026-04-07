@@ -172,6 +172,7 @@ async def create_stock(
         merge_on = payload.get('merge_mode', False)
         final_merged = {}
         for item in items:
+            p_code = str(item.get('Product Code') or 'UKN').replace(" ", "").upper()
             batch  = str(item.get('Batch Number') or 'NB').replace(" ", "").upper()
             
             # IDENTITY DEFINITION: Merged means 1 Per Product. Non-merged means 1 Per Batch.
