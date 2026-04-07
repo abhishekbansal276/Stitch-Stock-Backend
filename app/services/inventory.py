@@ -5,6 +5,7 @@ from app.services.firebase import db
 from google.cloud.firestore_v1.base_query import FieldFilter
 from google.cloud import firestore
 from app.services.email_service import email_service
+from app.utils import generate_12_digit_hash
 
 class InventoryService:
     def __init__(self):
@@ -23,7 +24,9 @@ class InventoryService:
         # Ensure every distribution split has a unique traceable ID
         for d in distributions:
             if not d.get('dist_id') or d.get('dist_id') == 'AUTO':
-                d['dist_id'] = f"POS-{str(uuid.uuid4())[:8].upper()}"
+                # Deterministic 12-digit ID: Hash(ParentID + Warehouse + Location)
+                seed = f"{barcode_id}-{d.get('warehouse')}-{d.get('location')}"
+                d['dist_id'] = generate_12_digit_hash(seed)
         
         total_qty = sum(float(d.get('qty', 0)) for d in distributions if d.get('qty'))
         # Store flat list of warehouses and specific locations for search
@@ -62,6 +65,22 @@ class InventoryService:
         
         # ── CROSS-INDEX UPDATE ──
         self._update_cross_index(barcode_id, distributions)
+
+    def get_existing_barcode(self, barcode_id: str) -> str:
+        """Returns existing barcode link if available in Firestore."""
+        doc = self.collection.document(barcode_id).get()
+        if doc.exists:
+            return doc.to_dict().get("barcode_link", "")
+        return ""
+
+    def get_existing_qr(self, barcode_id: str, dist_id: str) -> str:
+        """Returns existing QR link for a specific position distribution."""
+        doc = self.collection.document(barcode_id).get()
+        if doc.exists:
+            for dist in doc.to_dict().get("distributions", []):
+                if dist.get("dist_id") == dist_id:
+                    return dist.get("qr_link", "")
+        return ""
 
     def get_position(self, barcode_id: str) -> Dict:
         """Fetches the current spatial map for a barcode."""
@@ -171,9 +190,10 @@ class InventoryService:
         for dist in distributions:
             if dist.get('dist_id') == loc_id:
                 curr_qty = float(dist.get('qty', 0))
-                if curr_qty < qty - 0.001:
-                    # If it's marginally less, we just set to 0 (floating point safety)
-                    qty = curr_qty
+                # ── FULL PROOF VALIDATION ──
+                if curr_qty < qty - 0.0001:
+                    raise Exception(f"Insufficient stock at shelf. Required {qty}, Available {curr_qty}.")
+                
                 dist['qty'] = float(curr_qty - qty)
                 found = True
             new_distributions.append(dist)
@@ -417,6 +437,7 @@ class InventoryService:
                     'barcode_id': barcode_id,
                     'warehouse': d.get('warehouse'),
                     'location': d.get('location'),
+                    'batch_number': d.get('batch_number'), # [NEW] Tracking batch at position level
                     'updated_at': int(time.time())
                 })
         batch.commit()

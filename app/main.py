@@ -17,6 +17,7 @@ from app.services.inventory import inventory_service
 from app.services.location_service import location_service
 from app.services.activity_service import activity_service
 from app.services.google_drive_service import drive_service
+from app.utils import generate_12_digit_hash
 from app.dependencies.auth import get_current_user, require_admin, require_staff
 from app.models.stock import StockTransferRequest
 
@@ -203,20 +204,14 @@ async def create_stock(
         # 2. GENERATE DETERMINISTIC 12-DIGIT NUMERIC IDs
         item_ids = []
         for item in items:
-            p_code = str(item.get('Product Code') or 'UKN').replace(" ", "").upper()
-            batch  = str(item.get('Batch Number') or 'NB').replace(" ", "").upper()
+            p_code = str(item.get('Product Code') or 'UKN')
+            batch  = str(item.get('Batch Number') or 'NB')
             
-            # Clean non-alphanumeric chars for barcode safety
-            p_code_c = re.sub(r'[^A-Z0-9]', '', p_code)
-            batch_c  = re.sub(r'[^A-Z0-9]', '', batch)
-            
-            # Generate deterministic 12-digit ID: int(sha256(seed)) % 10^12
-            seed = f"{p_code_c}-{batch_c}".encode()
-            numeric_hash = int(hashlib.sha256(seed).hexdigest(), 16)
-            item_id = str(numeric_hash % 10**12).zfill(12)
+            # Use centralized 12-digit hashing
+            item_id = generate_12_digit_hash(f"{p_code}-{batch}")
             
             item_ids.append(item_id)
-            item['id'] = item_id # Ensure ID is present for background tasks
+            item['id'] = item_id 
             item['barcode_id'] = item_id
         
         print(f"🚀 INGESTION START: Received {len(items)} items. IDs: {item_ids}")
@@ -320,8 +315,19 @@ async def _process_async_ingestion(header: dict, items: list, item_ids: list, us
 def _process_barcode_archiving(code_id: str, label: str, is_position: bool = False, parent_id: str = None):
     """Internal helper to generate/upload QR and update storage in background."""
     try:
-        # Switch to the new Elite QR Generator
-        # Archive as standard 1D Barcode (Code 128)
+        # 1. DEDUPLICATION CHECK: Do we already have this barcode in the cloud?
+        existing_link = ""
+        if not is_position:
+            existing_link = inventory_service.get_existing_barcode(code_id)
+        else:
+            existing_link = inventory_service.get_existing_qr(parent_id, code_id)
+
+        if existing_link:
+            print(f"♻️ [REUSE] Barcode already exists for {code_id}. Skipping generation.")
+            return
+
+        # 2. GENERATE NEW (Only if missing)
+        print(f"🆕 [NEW] Generating barcode/QR for {code_id}...")
         link = drive_service.generate_barcode(code_id, label)
         if link:
             if not is_position:
