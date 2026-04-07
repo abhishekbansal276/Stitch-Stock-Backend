@@ -6,7 +6,8 @@ import time
 
 def get_current_user(
     authorization: str = Header(...),
-    x_user_role: str = Header(None, alias="X-User-Role")
+    x_user_role: str = Header(None, alias="X-User-Role"),
+    x_user_name: str = Header(None, alias="X-User-Name")
 ):
     """
     Verify the Firebase ID token and trust the X-User-Role header 
@@ -25,6 +26,8 @@ def get_current_user(
         
         uid = decoded_token.get("uid")
         email = decoded_token.get("email")
+        # Precedence: Mobile passed header > Firebase Claims > Email Prefix
+        full_name = x_user_name or decoded_token.get("name")
 
         if not email:
             print("Auth Error: Token missing email claim.")
@@ -44,7 +47,7 @@ def get_current_user(
             "email": email,
             "role": x_user_role,
             "is_active": True,
-            "full_name": email.split('@')[0].capitalize() # Fallback name
+            "full_name": full_name if full_name else email.split('@')[0].capitalize()
         }
         
         return user_data
