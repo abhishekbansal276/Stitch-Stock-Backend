@@ -551,10 +551,10 @@ FIELD MAPPING — Accept ANY of these aliases (case-insensitive, fuzzy-match)
   Freight Broker, Cargo Agent, Hauler, Road Carrier, Rail Carrier, Air Carrier,
   Sea Carrier, NVOCC, MTO, Multimodal Operator, Express Company, Last Mile Partner...
 
-▸ Product Code: Product Code, Item Code, Part No, SKU, HSN, Article No, Model No,
+▸ Product Code: HSN, SAC, HSN Code, Item Code, Part No, SKU, Article No, Model No,
   Part Number, Item No, Item Number, Material Code, Material No, Cat No,
   Catalogue No, Catalogue Number, Stock Code, Stock No, Reference Code, Ref Code,
-  Product ID, Item ID, BOM Code, Component Code, HSN Code, HSN/SAC, SAC Code,
+  Product ID, Item ID, BOM Code, Component Code, HSN/SAC, SAC Code,
   UPC Code, EAN Code, ASIN, Internal Code, System Code, Drawing No,
   Specification No, Grade Code, Variant Code, PRODUCT CODE (column header),
   Item Ref, P. Code, Prod Code, Code, Item#, Product#, Material Number,
@@ -562,6 +562,8 @@ FIELD MAPPING — Accept ANY of these aliases (case-insensitive, fuzzy-match)
   UN No (hazardous), IMDS No, OEM Code, Vendor Code, Buyer Code, Alt Code,
   Substitute Code, Legacy Code, Old Code, New Code, Cross Ref Code,
   Color Code, Size Code, Grade, Quality Code, Batch Code (if used as product ID)...
+  **CRITICAL**: If an HSN or SAC code (usually 4, 6, or 8 digits) is available in the 
+  item row, prioritize it as the "Product Code".
 
 ▸ Product Name: Description, Description of Goods, Product Name, Material,
   Item Description, Item Name, Product Description, Goods Description, Particulars,
