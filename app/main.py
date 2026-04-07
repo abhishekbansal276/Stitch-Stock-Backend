@@ -169,25 +169,23 @@ async def create_stock(
         user_display = user.get('full_name', user['email'])
         
         # 1. BATCH MERGE: Group items by (Product Code, Batch) to ensure 1 Barcode per Batch
-        import hashlib
-        import re
-        
-        merged_map = {}
+        final_merged = {}
         for item in items:
             p_code = str(item.get('Product Code') or 'UKN').replace(" ", "").upper()
             batch  = str(item.get('Batch Number') or 'NB').replace(" ", "").upper()
-            group_key = (p_code, batch)
+            # Key is either (Code, Batch) or just (Code) if merging logic implies product-level
+            # For now, follow "1 Barcode per Batch" rule
+            group_key = f"{p_code}-{batch}"
             
-            if group_key not in merged_map:
-                merged_map[group_key] = item
+            if group_key not in final_merged:
+                item_id = generate_12_digit_hash(group_key)
+                item['id'] = item_id
+                item['barcode_id'] = item_id
+                final_merged[group_key] = item
             else:
-                # Merge distributions into the primary record
-                base = merged_map[group_key]
-                base_dists = list(base.get('distributions', []))
-                incoming_dists = list(item.get('distributions', []))
-                base['distributions'] = base_dists + incoming_dists
-                
-                # Update aggregated quantities
+                base = final_merged[group_key]
+                base['distributions'] = list(base.get('distributions', [])) + list(item.get('distributions', []))
+                # Aggregate counts
                 try:
                     q1 = float(base.get('Quantity Received', 0))
                     q2 = float(item.get('Quantity Received', 0))
@@ -198,21 +196,10 @@ async def create_stock(
                     base['Number of Bags'] = b1 + b2
                 except: pass
 
-        # Regenerate items list from merged map
-        items = list(merged_map.values())
-
-        # 2. GENERATE DETERMINISTIC 12-DIGIT NUMERIC IDs
-        item_ids = []
-        for item in items:
-            p_code = str(item.get('Product Code') or 'UKN')
-            batch  = str(item.get('Batch Number') or 'NB')
-            
-            # Use centralized 12-digit hashing
-            item_id = generate_12_digit_hash(f"{p_code}-{batch}")
-            
-            item_ids.append(item_id)
-            item['id'] = item_id 
-            item['barcode_id'] = item_id
+        items = list(final_merged.values())
+        item_ids = [it['id'] for it in items]
+        
+        print(f"🚀 INGESTION START: Received {len(items)} unique items. IDs: {item_ids}")
         
         print(f"🚀 INGESTION START: Received {len(items)} items. IDs: {item_ids}")
 
