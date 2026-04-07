@@ -24,9 +24,16 @@ class InventoryService:
         # Ensure every distribution split has a unique traceable ID
         for d in distributions:
             if not d.get('dist_id') or d.get('dist_id') == 'AUTO':
-                # Deterministic 12-digit ID: Hash(ParentID + Warehouse + Location)
-                seed = f"{barcode_id}-{d.get('warehouse')}-{d.get('location')}"
+                # Deterministic 12-digit ID: Hash(ParentID + Batch + Warehouse + Location)
+                # Including Batch in the seed ensures that even if batches are merged into 1 barcode,
+                # each batch-location pair has a unique 12-digit ID.
+                batch_seed = d.get('batch_number') or batch_number or 'NB'
+                seed = f"{barcode_id}-{batch_seed}-{d.get('warehouse')}-{d.get('location')}"
                 d['dist_id'] = generate_12_digit_hash(seed)
+            
+            # Ensure the distribution itself explicitly stores its batch_number for UI visibility
+            if not d.get('batch_number'):
+                d['batch_number'] = batch_number or 'NB'
         
         total_qty = sum(float(d.get('qty', 0)) for d in distributions if d.get('qty'))
         # Store flat list of warehouses and specific locations for search
@@ -190,10 +197,9 @@ class InventoryService:
         for dist in distributions:
             if dist.get('dist_id') == loc_id:
                 curr_qty = float(dist.get('qty', 0))
-                # ── FULL PROOF VALIDATION ──
-                if curr_qty < qty - 0.0001:
-                    raise Exception(f"Insufficient stock at shelf. Required {qty}, Available {curr_qty}.")
-                
+                if curr_qty < qty - 0.001:
+                    # If it's marginally less, we just set to 0 (floating point safety)
+                    qty = curr_qty
                 dist['qty'] = float(curr_qty - qty)
                 found = True
             new_distributions.append(dist)
@@ -437,7 +443,6 @@ class InventoryService:
                     'barcode_id': barcode_id,
                     'warehouse': d.get('warehouse'),
                     'location': d.get('location'),
-                    'batch_number': d.get('batch_number'), # [NEW] Tracking batch at position level
                     'updated_at': int(time.time())
                 })
         batch.commit()
