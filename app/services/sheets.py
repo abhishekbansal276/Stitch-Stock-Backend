@@ -37,8 +37,8 @@ PALETTE = {
     "low_stock_fg":  {"red": 0.714, "green": 0.102, "blue": 0.102},      # #B61A1A dark red
     "in_move_bg":    {"red": 0.898, "green": 0.973, "blue": 0.933},      # green tint
     "in_move_fg":    {"red": 0.063, "green": 0.431, "blue": 0.239},      # dark green
-    "out_move_bg":   {"red": 1.000, "green": 0.945, "blue": 0.882},      # amber tint
-    "out_move_fg":   {"red": 0.580, "green": 0.310, "blue": 0.000},      # dark amber
+    "out_move_bg":   {"red": 1.000, "green": 0.922, "blue": 0.918},      # red tint (matches low stock)
+    "out_move_fg":   {"red": 0.714, "green": 0.102, "blue": 0.102},      # dark red
 
     "white": {"red": 1.0, "green": 1.0, "blue": 1.0},
 }
@@ -575,7 +575,7 @@ class SheetsService:
                     "index": 0,
                 }
             })
-            # OUT movement rows — soft amber
+            # OUT movement rows — soft red
             requests.append({
                 "addConditionalFormatRule": {
                     "rule": {
@@ -590,6 +590,10 @@ class SheetsService:
                             },
                             "format": {
                                 "backgroundColor": _rgb("out_move_bg"),
+                                "textFormat": {
+                                    "foregroundColor": _rgb("out_move_fg"),
+                                    "bold": True,
+                                },
                             },
                         },
                     },
