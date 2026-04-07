@@ -17,7 +17,7 @@ from app.services.inventory import inventory_service
 from app.services.location_service import location_service
 from app.services.activity_service import activity_service
 from app.services.google_drive_service import drive_service
-from app.dependencies.auth import get_current_user
+from app.dependencies.auth import get_current_user, require_admin, require_staff
 from app.models.stock import StockTransferRequest
 
 # Load environment variables for local development
@@ -404,7 +404,7 @@ async def remove_stock(
         raise HTTPException(status_code=500, detail=f"Removal failed: {str(e)}")
 
 @app.get("/reports/summary")
-async def get_summary(period: str = "all", user: dict = Depends(get_current_user)):
+async def get_summary(period: str = "all", user: dict = Depends(require_staff)):
     """
     Get live summary data from the 'Stock Summary' sheet.
     Supports 'period=today' for daily stats.
@@ -421,7 +421,7 @@ async def get_summary(period: str = "all", user: dict = Depends(get_current_user
         }
 
 @app.get("/reports/graphs")
-async def get_graph_data(user: dict = Depends(get_current_user)):
+async def get_graph_data(user: dict = Depends(require_staff)):
     """
     Get 7-day time-series and zone distribution for dashboard charts.
     """
@@ -432,7 +432,7 @@ async def get_graph_data(user: dict = Depends(get_current_user)):
         return {"movement": [], "zones": []}
 
 @app.get("/logs")
-async def get_logs(limit: int = 20, last_ts: int = None, search: str = None, user: dict = Depends(get_current_user)):
+async def get_logs(limit: int = 20, last_ts: int = None, search: str = None, user: dict = Depends(require_staff)):
     """Advanced Audit Timeline with Pagination and Multi-Field Search."""
     try:
         return activity_service.get_logs_paged(limit=limit, last_ts=last_ts, search=search)

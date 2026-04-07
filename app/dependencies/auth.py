@@ -82,5 +82,16 @@ def get_current_user(
 def require_admin(user: dict = Depends(get_current_user)):
     """Dependency that ensures the authenticated user has admin role."""
     if user.get("role") != "admin":
-        raise HTTPException(status_code=403, detail="Admin role required")
+        raise HTTPException(status_code=403, detail="Administrative access required")
+    return user
+
+
+def require_staff(user: dict = Depends(get_current_user)):
+    """Dependency that allows both Administrators and Operators."""
+    role = user.get("role", "").lower()
+    if role not in ["admin", "operator"]:
+        raise HTTPException(
+            status_code=403, 
+            detail=f"Resource Access Denied: {role.upper()} role lacks required clearance."
+        )
     return user
