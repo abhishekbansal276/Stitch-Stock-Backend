@@ -237,6 +237,11 @@ async def _process_async_ingestion(header: dict, items: list, item_ids: list, us
             return
 
         # 2. Process Individual Items
+        total_items_in_batch = len(item_ids)
+        total_qty_combined = 0.0
+        invoice_num = header.get('Invoice Number', 'INV-N/A')
+        supplier = header.get('Supplier Name', 'N/A')
+
         for i, item_id in enumerate(item_ids):
             try:
                 item_data = items[i]
@@ -264,20 +269,10 @@ async def _process_async_ingestion(header: dict, items: list, item_ids: list, us
                 # MARK AS SYNCED ✅
                 doc_ref.update({'sync_status': 'synced', 'sync_at': int(time.time())})
 
-                # LOG & NOTIFY
-                qty_val = 0.0
-                try: qty_val = float(item_data.get('Quantity Received', 0))
+                # Accumulate for Single Activity Log
+                try: 
+                    total_qty_combined += float(item_data.get('Quantity Received', 0))
                 except: pass
-                
-                activity_service.log_and_notify(
-                    user=user,
-                    action_type="IN",
-                    item_name=item_data.get('Product Name', 'New Stock'),
-                    product_code=item_data.get('Product Code', 'N/A'),
-                    qty_change=qty_val,
-                    location="System Ingestion",
-                    description=item_data.get('Description', '')
-                )
                 
                 # Barcode Archiving (Identity-based naming)
                 p_code = str(item_data.get('Product Code', 'UKN')).replace(" ", "").upper()
@@ -293,6 +288,17 @@ async def _process_async_ingestion(header: dict, items: list, item_ids: list, us
                 print(f"⚠️ ITEM SYNC FAILURE [{item_id}]: {item_err}")
                 traceback.print_exc()
                 continue
+
+        # SINGLE CONSOLIDATED LOG & NOTIFY
+        activity_service.log_and_notify(
+            user=user,
+            action_type="IN",
+            item_name=f"Invoice #{invoice_num}",
+            product_code=f"{total_items_in_batch} Identities",
+            qty_change=total_qty_combined,
+            location=supplier,
+            description=f"Batch Ingestion of {total_items_in_batch} stock items into warehouse registry."
+        )
 
         print(f"✅ BATCH SYNC COMPLETED: {item_ids}")
 
