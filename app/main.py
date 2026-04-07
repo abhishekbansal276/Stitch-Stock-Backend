@@ -372,12 +372,18 @@ async def remove_stock(
         usage = payload.get('usage', 'General')
         remarks = payload.get('remarks', '')
         
+        print(f"📉 [REMOVE_START] ID: {stock_item_id} | Qty: {qty_to_remove} | Loc: {loc_name}")
+
         item = sheets_service.get_stock_item(stock_item_id)
         if not item:
+            print(f"⚠️ [REMOVE_WARN] Item {stock_item_id} not found in Sheets.")
             raise HTTPException(status_code=404, detail="Stock item not found")
             
         # 1. Audit + Alert Check Only (Frontend already deducted in Firestore)
-        new_remaining = inventory_service.remove_stock_spatial(stock_item_id, loc_id, qty_to_remove, user=user, bags_removed=bags_removed, skip_deduction=True)
+        new_remaining = inventory_service.remove_stock_spatial(
+            stock_item_id, loc_id, qty_to_remove, 
+            user=user, bags_removed=bags_removed, skip_deduction=True
+        )
         
         # 2. Log Activity & Notify Admins
         activity_service.log_and_notify(
@@ -390,9 +396,14 @@ async def remove_stock(
             description=remarks
         )
         
+        print(f"✅ [REMOVE_SUCCESS] ID: {stock_item_id} | New Total: {new_remaining}")
         return {"message": "Stock removed successfully", "remaining": new_remaining}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Removal failed: {str(e)}")
+        import traceback
+        print(f"🛑 [REMOVE_ERROR] Fatal error during deduction for {stock_item_id}:")
+        print(f"Payload: {payload}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Deduction system failure: {str(e)}")
 
 @app.get("/reports/summary")
 async def get_summary(period: str = "all", user: dict = Depends(require_staff)):

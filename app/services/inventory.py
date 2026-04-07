@@ -147,8 +147,9 @@ class InventoryService:
         print(f"⚠️ DISPATCH FAILED: Position {dist_id} not found in any index.")
         return {}
 
-    @firestore.transactional
     def check_and_alert_only(self, transaction, doc_ref):
+        """Checks if an item is currently in low-stock and triggers alert if first time."""
+        print(f"🔍 [ALERT_CHECK] Checking stock levels for {doc_ref.id}")
         """Checks if an item is currently in low-stock and triggers alert if first time."""
         snapshot = doc_ref.get(transaction=transaction)
         if not snapshot.exists: return
@@ -182,8 +183,9 @@ class InventoryService:
                 data['unit']
             )
 
-    @firestore.transactional
     def deduct_from_location(self, transaction, doc_ref, loc_id: str, qty: float):
+        """Atomic deduction from a specific shelf/zone ID."""
+        print(f"📉 [DEDUCTION] Attempting to remove {qty} from location {loc_id} of item {doc_ref.id}")
         """Atomic deduction from a specific shelf/zone ID."""
         snapshot = doc_ref.get(transaction=transaction)
         if not snapshot.exists:
@@ -252,14 +254,15 @@ class InventoryService:
         doc_ref = self.collection.document(barcode_id)
         
         if skip_deduction:
-            # Audit mode (Frontend already updated Firestore)
-            # We just perform the alert check in a transaction to be safe
+            print(f"📖 [AUDIT_MODE] Stock {barcode_id} removal (Audit Check Only)")
             transaction = db.transaction()
             self.check_and_alert_only(transaction, doc_ref)
             data = doc_ref.get().to_dict()
             new_total = data.get('total_qty', 0)
         else:
+            print(f"⚡ [DEDUCTION_MODE] Stock {barcode_id} removal from location {loc_id}")
             transaction = db.transaction()
+            # We must pass the transaction object to the internal logic
             new_total = self.deduct_from_location(transaction, doc_ref, loc_id, qty)
         
         # ── SYNC TO SHEETS ──
