@@ -168,22 +168,20 @@ async def create_stock(
         items = payload.get('items', [])
         user_display = user.get('full_name', user['email'])
         
-        # 1. BATCH MERGE: Group items by (Product Code, Batch) to ensure 1 Barcode per Batch
+        # 1. BATCH MERGE: Group items by (Product Code / Batch) to ensure 1 Item per Barcode
         final_merged = {}
         for item in items:
             p_code = str(item.get('Product Code') or 'UKN').replace(" ", "").upper()
             batch  = str(item.get('Batch Number') or 'NB').replace(" ", "").upper()
-            # Key is either (Code, Batch) or just (Code) if merging logic implies product-level
-            # For now, follow "1 Barcode per Batch" rule
             group_key = f"{p_code}-{batch}"
+            item_id = generate_12_digit_hash(group_key)
             
-            if group_key not in final_merged:
-                item_id = generate_12_digit_hash(group_key)
+            if item_id not in final_merged:
                 item['id'] = item_id
                 item['barcode_id'] = item_id
-                final_merged[group_key] = item
+                final_merged[item_id] = item
             else:
-                base = final_merged[group_key]
+                base = final_merged[item_id]
                 base['distributions'] = list(base.get('distributions', [])) + list(item.get('distributions', []))
                 # Aggregate counts
                 try:
@@ -197,11 +195,9 @@ async def create_stock(
                 except: pass
 
         items = list(final_merged.values())
-        item_ids = [it['id'] for it in items]
+        item_ids = list(final_merged.keys())
         
-        print(f"🚀 INGESTION START: Received {len(items)} unique items. IDs: {item_ids}")
-        
-        print(f"🚀 INGESTION START: Received {len(items)} items. IDs: {item_ids}")
+        print(f"🚀 INGESTION START: Processing {len(items)} unique identities. IDs: {item_ids}")
 
         # 3. BACKGROUND TASKS (Heavy / Slow Operations)
         background_tasks.add_task(_process_async_ingestion, header, items, item_ids, user)

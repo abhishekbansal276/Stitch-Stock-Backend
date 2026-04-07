@@ -940,23 +940,28 @@ class SheetsService:
         register_appends = []
 
         # ── 2. PROCESS ITEMS ──────────────────────────────────────────────────
-        processed_summary_codes = set() # Track codes we've updated in this batch
+        batch_new_codes = {}    # code -> idx in register_appends
+        batch_new_barcodes = {} # barcode -> idx in register_appends
 
         for i, item in enumerate(items):
-            item_id = item_ids[i]
-            name = item.get("Product Name") or header.get("Product Name") or "Unknown Item"
+            item_id = str(item_ids[i]).strip()
+            name = str(item.get("Product Name") or header.get("Product Name") or "Unknown Item").strip()
             code = str(item.get("Product Code") or header.get("Product Code") or item_id[:8]).strip()
             qty  = self._to_float(item.get("Quantity Received") or header.get("Quantity Received") or 0)
-            unit = item.get("Unit") or header.get("Unit") or "PCS"
+            unit = str(item.get("Unit") or header.get("Unit") or "PCS").strip()
+
+            # Safety: Skip 'Ghost' entries
+            if qty < 0.001 and name == "Unknown Item":
+                continue
 
             # ── A. Register Upsert ──
-            row_idx = existing_reg_barcode.get(str(item_id).strip()) or existing_reg_code.get(code)
+            row_idx = existing_reg_barcode.get(item_id) or existing_reg_code.get(code)
             h = {n: i for i, n in enumerate(self.BASE_SCHEMA)}
             
             if row_idx:
-                # Prepare Update for Existing Row (Quantity only)
-                old_reg_qty = 0.0
+                # Update Existing Row in Spreadsheet
                 qty_idx = h.get("Quantity Received", 2)
+                old_reg_qty = 0.0
                 if row_idx <= len(reg_rows):
                     old_reg_qty = self._to_float(reg_rows[row_idx-1][qty_idx]) if len(reg_rows[row_idx-1]) > qty_idx else 0.0
                 
@@ -964,7 +969,6 @@ class SheetsService:
                     "range": f"Stock Register!{self._get_col_letter(qty_idx)}{row_idx}",
                     "values": [[old_reg_qty + qty]]
                 })
-                # Update "Updated At" and "Updated By"
                 updates_at_idx = h.get("Updated At", 23)
                 updates_by_idx = h.get("Updated By", 24)
                 col_range = f"{self._get_col_letter(updates_at_idx)}{row_idx}:{self._get_col_letter(updates_by_idx)}{row_idx}"
@@ -972,50 +976,54 @@ class SheetsService:
                     "range": f"Stock Register!{col_range}",
                     "values": [[now, user_display]]
                 })
+            elif item_id in batch_new_barcodes:
+                # Update within CURRENT batch (Barcode match)
+                idx = batch_new_barcodes[item_id]
+                curr_q = self._to_float(register_appends[idx][h["Quantity Received"]])
+                register_appends[idx][h["Quantity Received"]] = str(curr_q + qty)
+            elif code in batch_new_codes:
+                # Update within CURRENT batch (Code match)
+                idx = batch_new_codes[code]
+                curr_q = self._to_float(register_appends[idx][h["Quantity Received"]])
+                register_appends[idx][h["Quantity Received"]] = str(curr_q + qty)
             else:
-                # Prepare Append for New Row
+                # Append NEW row
                 row_data = [""] * len(self.BASE_SCHEMA)
-                # Primary fields
                 row_data[h["Product Name"]] = name
                 row_data[h["Product Code"]] = code
                 row_data[h["Quantity Received"]] = str(qty)
                 row_data[h["Unit"]] = unit
                 row_data[h["Number of Bags"]] = str(item.get("Number of Bags") or 0)
                 row_data[h["Storage Type"]] = item.get("storage_type") or "UNIT"
-                
-                # Metadata
                 row_data[h["Barcode ID"]] = item_id
                 row_data[h["Created At"]] = now
                 row_data[h["Created By"]] = user_display
                 row_data[h["Updated At"]] = now
                 row_data[h["Updated By"]] = user_display
                 
-                # Dynamic mapping for everything else
                 for col_name in self.BASE_SCHEMA:
-                    if not row_data[h[col_name]]: # Only if not already set
+                    if not row_data[h[col_name]]:
                         val = item.get(col_name) or header.get(col_name)
                         if val is None and col_name == "Taxes (IGST/CGST/SGST)":
                             val = header.get("Taxes") or item.get("Taxes")
-                            
                         if isinstance(val, list):
-                            val = ", ".join([f"{t.get('label')}: {t.get('amount')}" for t in val if isinstance(t, dict)])
-                            
+                            val = ", ".join([f"{str(t.get('label'))}: {t.get('amount')}" for t in val if isinstance(t, dict)])
                         row_data[h[col_name]] = val if val is not None else ""
                 
+                batch_new_barcodes[item_id] = len(register_appends)
+                batch_new_codes[code] = len(register_appends)
                 register_appends.append(row_data)
 
             # ── B. Movement Entry ──
             trans_id = header.get("Invoice Number") or f"TRANS-{str(uuid.uuid4())[:4].upper()}"
             distributions = item.get("distributions", [])
-            
             if not distributions:
-                # Default distribution (Whole Unit)
                 movements_append.append([now, name, "IN", qty, "Main Warehouse", "Full Receive", user_display, f"MOV-{uuid.uuid4().hex[:6].upper()}", item_id, trans_id, item_id, "default"])
             else:
                 for dist in distributions:
-                    d_qty = self._to_float(dist.get("qty", 0))
-                    d_loc = dist.get("location", "Main Floor")
-                    d_wh  = dist.get("warehouse", "Main Warehouse")
+                    d_qty = self._to_float(dist.get("qty") or dist.get("quantity") or 0)
+                    d_loc = dist.get("location") or dist.get("loc_name") or "Main Floor"
+                    d_wh  = dist.get("warehouse") or dist.get("wh_name") or "Main Warehouse"
                     d_id  = dist.get("dist_id") or item_id
                     wh_id = dist.get("warehouse_id") or "default"
                     movements_append.append([now, name, "IN", d_qty, d_wh, d_loc, user_display, f"MOV-{uuid.uuid4().hex[:6].upper()}", item_id, trans_id, d_id, wh_id])

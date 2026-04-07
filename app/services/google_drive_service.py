@@ -11,13 +11,18 @@ class GoogleDriveService:
     def __init__(self):
         self.script_url = os.getenv("GOOGLE_SCRIPT_URL")
         self.folder_id = os.getenv("GOOGLE_DRIVE_FOLDER_ID")
+        self._cache = {} # code_id -> webViewLink
 
     def generate_barcode(self, code_id: str, label: str) -> str:
         """Generates a high-fidelity Code 128 Barcode and archives it in Google Drive."""
-        import traceback
+        # 0. IDEMPOTENCY GUARD: Skip if already generated in this process
+        if code_id in self._cache:
+            print(f"♻️ [BARCODE_GEN] Returning cached link for {code_id}")
+            return self._cache[code_id]
+
         print(f"📁 [BARCODE_GEN] Request for {code_id} ({label})")
         # traceback.print_stack(limit=5) # Enable if needed for deep trace
-
+ 
         try:
             # 1. CREATE BARCODE (Code 128)
             # Standard options for high contrast and readability
@@ -57,7 +62,10 @@ class GoogleDriveService:
             if response.status_code == 200:
                 result = response.json()
                 if result.get("status") == "success":
-                    return result.get("webViewLink", "")
+                    link = result.get("webViewLink", "")
+                    if link:
+                        self._cache[code_id] = link
+                    return link
             
             print(f"Barcode Cloud Error: {response.text}")
             return ""
