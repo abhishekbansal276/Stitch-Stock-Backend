@@ -910,9 +910,8 @@ class SheetsService:
             code_idx = h.get("Product Code", 1)
             qty_idx  = h.get("Quantity Received", 2)
             
-            # Index for fast search
+            # Index for fast search - ONLY barcode matches are updates to existing ledger rows
             existing_reg_barcode = {str(r[b_id_idx]).strip(): i+1 for i, r in enumerate(reg_rows) if len(r) > b_id_idx}
-            existing_reg_code    = {str(r[code_idx]).strip(): i+1 for i, r in enumerate(reg_rows) if len(r) > code_idx}
             summary_idx          = {str(r[1]).strip().upper(): i+1 for i, r in enumerate(sum_rows) if len(r) > 1}
             
             # Cache summary data in memory for accumulation
@@ -955,7 +954,9 @@ class SheetsService:
                 continue
 
             # ── A. Register Upsert ──
-            row_idx = existing_reg_barcode.get(item_id) or existing_reg_code.get(code)
+            # CRITICAL: We only update if the Barcode ID matches exactly. 
+            # If Product Code matches but Barcode ID is new, we Append (New Batch).
+            row_idx = existing_reg_barcode.get(item_id)
             h = {n: i for i, n in enumerate(self.BASE_SCHEMA)}
             
             if row_idx:
@@ -989,10 +990,14 @@ class SheetsService:
             else:
                 # Append NEW row
                 row_data = [""] * len(self.BASE_SCHEMA)
+                h = {n: i for i, n in enumerate(self.BASE_SCHEMA)}
+                
+                # Manual assignments for speed/certainty
                 row_data[h["Product Name"]] = name
                 row_data[h["Product Code"]] = code
                 row_data[h["Quantity Received"]] = str(qty)
                 row_data[h["Unit"]] = unit
+                row_data[h["Batch Number"]] = str(item.get("Batch Number", "")).strip()
                 row_data[h["Number of Bags"]] = str(item.get("Number of Bags") or 0)
                 row_data[h["Storage Type"]] = item.get("storage_type") or "UNIT"
                 row_data[h["Barcode ID"]] = item_id
@@ -1001,17 +1006,19 @@ class SheetsService:
                 row_data[h["Updated At"]] = now
                 row_data[h["Updated By"]] = user_display
                 
+                # Map remaining fields from item/header
                 for col_name in self.BASE_SCHEMA:
-                    if not row_data[h[col_name]]:
+                    idx = h[col_name]
+                    if not row_data[idx]:
                         val = item.get(col_name) or header.get(col_name)
                         if val is None and col_name == "Taxes (IGST/CGST/SGST)":
                             val = header.get("Taxes") or item.get("Taxes")
+                        
                         if isinstance(val, list):
                             val = ", ".join([f"{str(t.get('label'))}: {t.get('amount')}" for t in val if isinstance(t, dict)])
-                        row_data[h[col_name]] = val if val is not None else ""
+                        row_data[idx] = str(val) if val is not None else ""
                 
                 batch_new_barcodes[item_id] = len(register_appends)
-                batch_new_codes[code] = len(register_appends)
                 register_appends.append(row_data)
 
             # ── B. Movement Entry ──

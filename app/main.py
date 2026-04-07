@@ -222,17 +222,33 @@ async def _process_async_ingestion(header: dict, items: list, item_ids: list, us
     try:
         user_display = user.get('full_name', user['email'])
         
-        # 1. Update Firestore & Google Sheets
-        # Sheets Save (Batch logic)
+        # 1. PARALLEL BARCODE GENERATION 🚀
+        # We generate links FIRST so they are available for the first Sheets write
+        barcode_tasks = []
+        for i, item_id in enumerate(item_ids):
+            item_data = items[i]
+            p_code = str(item_data.get('Product Code', 'UKN')).replace(" ", "").upper()
+            batch_label = "M" if item_data.get('is_merged') else str(item_data.get('Batch Number', 'NB')).replace(" ", "").upper()
+            barcode_tasks.append(_process_barcode_archiving_async(item_id, p_code, batch_label))
+        
+        print(f"📡 Generating {len(barcode_tasks)} barcodes in parallel...")
+        barcode_links = await asyncio.gather(*barcode_tasks)
+        
+        # Inject links back into items for Sheets/Firestore
+        for i, link in enumerate(barcode_links):
+            if link:
+                items[i]['Barcode Link'] = link
+
+        # 2. Update Google Sheets (Running in thread to prevent blocking worker)
         try:
             print(f"📊 SYNCING TO SHEETS: Batch size {len(item_ids)}")
-            sheets_service.save_stock_batch(header, items, item_ids, user_display)
+            await asyncio.to_thread(sheets_service.save_stock_batch, header, items, item_ids, user_display)
         except Exception as sheet_err:
             print(f"❌ SHEETS CRITICAL ERROR: {sheet_err}")
             traceback.print_exc()
-            # If sheets fail, we still try to update Firestore status to 'error'
+            # Mark firestore as error
             for item_id in item_ids:
-                try: inventory_service.db.collection('inventory_positions').document(item_id).update({'sync_status': 'error', 'sync_error': str(sheet_err)})
+                try: db.collection('inventory_positions').document(item_id).update({'sync_status': 'error', 'sync_error': str(sheet_err)})
                 except: pass
             return
 
@@ -266,23 +282,12 @@ async def _process_async_ingestion(header: dict, items: list, item_ids: list, us
                         user_name=user_display
                     )
                 
+                # Update link if generated
+                if item_data.get('Barcode Link'):
+                    doc_ref.update({'barcode_link': item_data['Barcode Link']})
+
                 # MARK AS SYNCED ✅
                 doc_ref.update({'sync_status': 'synced', 'sync_at': int(time.time())})
-
-                # Accumulate for Single Activity Log
-                try: 
-                    total_qty_combined += float(item_data.get('Quantity Received', 0))
-                except: pass
-                
-                # Barcode Archiving (Identity-based naming)
-                p_code = str(item_data.get('Product Code', 'UKN')).replace(" ", "").upper()
-                batch_label = "M" if item_data.get('is_merged') else str(item_data.get('Batch Number', 'NB')).replace(" ", "").upper()
-                
-                _process_barcode_archiving(
-                    item_id, 
-                    product_code=p_code, 
-                    batch_number=batch_label
-                )
                         
             except Exception as item_err:
                 print(f"⚠️ ITEM SYNC FAILURE [{item_id}]: {item_err}")
@@ -306,32 +311,23 @@ async def _process_async_ingestion(header: dict, items: list, item_ids: list, us
         print(f"🛑 CRITICAL ASYNC INGESTION FAILURE: {e}")
         traceback.print_exc()
 
-def _process_barcode_archiving(code_id: str, product_code: str, batch_number: str, is_position: bool = False, parent_id: str = None):
-    """Internal helper to generate/upload QR and update storage in background."""
+async def _process_barcode_archiving_async(code_id: str, product_code: str, batch_number: str) -> str:
+    """Internal helper to generate/upload QR using a thread and return the link."""
     try:
         # 1. DEDUPLICATION CHECK
-        existing_link = ""
-        if not is_position:
-            existing_link = inventory_service.get_existing_barcode(code_id)
-        else:
-            existing_link = inventory_service.get_existing_qr(parent_id, code_id)
+        existing_link = await asyncio.to_thread(inventory_service.get_existing_barcode, code_id)
 
         if existing_link:
-            print(f"♻️ [REUSE] Barcode already exists for {code_id}. Skipping generation.")
-            return
+            print(f"♻️ [REUSE] Barcode link exists for {code_id}.")
+            return existing_link
 
-        # 2. GENERATE NEW (Only if missing)
-        print(f"🆕 [NEW] Generating barcode/QR for {code_id}...")
-        link = drive_service.generate_barcode(code_id, product_code, batch_number)
-        if link:
-            if not is_position:
-                # Main Item ID
-                sheets_service.update_barcode_link(code_id, link)
-                inventory_service.update_barcode_link(code_id, link)
-            else:
-                inventory_service.update_distribution_qr(parent_id, code_id, link)
+        # 2. GENERATE NEW
+        print(f"🆕 Generating barcode for {code_id}...")
+        link = await asyncio.to_thread(drive_service.generate_barcode, code_id, product_code, batch_number)
+        return link or ""
     except Exception as e:
         print(f"Background QR Error [{code_id}]: {e}")
+        return ""
 
 @app.get("/stock/position/{dist_id}")
 async def get_stock_by_position(
