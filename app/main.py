@@ -622,6 +622,19 @@ async def remove_alert_email(payload: dict, user: dict = Depends(get_current_use
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.post("/admin/beautify-sheets")
+async def beautify_sheets(user: dict = Depends(get_current_user)):
+    """Admin only: Trigger global UI/formatting refresh for all Google Sheets."""
+    if user.get('role') != 'admin':
+        raise HTTPException(status_code=403, detail="Admin access required")
+    
+    try:
+        from app.services.sheets import sheets_service
+        sheets_service.beautify_all()
+        return {"status": "success", "message": "All sheets have been beautified with Elite design tokens."}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Beautification failed: {str(e)}")
+
 if __name__ == "__main__":
     import uvicorn
     import os

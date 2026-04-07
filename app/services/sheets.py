@@ -384,12 +384,12 @@ class SheetsService:
             }
         })
 
-        # ── 3. HEADER ROW HEIGHT (taller for visibility) ──────────────────────
+        # ── 3. HEADER ROW HEIGHT (taller for professional look) ───────────────
         requests.append({
             "updateDimensionProperties": {
                 "range": {"sheetId": sheet_id, "dimension": "ROWS",
                           "startIndex": 0, "endIndex": frozen_rows},
-                "properties": {"pixelSize": 38},
+                "properties": {"pixelSize": 42},
                 "fields": "pixelSize",
             }
         })
@@ -406,11 +406,11 @@ class SheetsService:
                     "userEnteredFormat": {
                         "textFormat": {
                             "fontSize": 9,
-                            "fontFamily": "Google Sans",
+                            "fontFamily": "Inter", # Modern typeface
                         },
                         "verticalAlignment": "MIDDLE",
                         "wrapStrategy": "CLIP",
-                        "padding": {"top": 4, "bottom": 4, "left": 8, "right": 8},
+                        "padding": {"top": 6, "bottom": 6, "left": 12, "right": 12},
                     }
                 },
                 "fields": "userEnteredFormat(textFormat,verticalAlignment,wrapStrategy,padding)",
@@ -421,8 +421,8 @@ class SheetsService:
         requests.append({
             "updateDimensionProperties": {
                 "range": {"sheetId": sheet_id, "dimension": "ROWS",
-                          "startIndex": frozen_rows, "endIndex": 1000},
-                "properties": {"pixelSize": 26},
+                          "startIndex": frozen_rows, "endIndex": 2000},
+                "properties": {"pixelSize": 32}, # Slightly taller rows for readability
                 "fields": "pixelSize",
             }
         })
@@ -1419,6 +1419,11 @@ class SheetsService:
                 print(f"⚠️ Refresh failed: Sheet '{title}' not found.")
         except Exception as e:
             print(f"Refresh error: {e}")
+
+    def beautify_all(self):
+        """Beautify all system sheets (Register, Movements, Summary)."""
+        for sheet_name in ["Stock Register", "Stock Movements", "Stock Summary"]:
+            self.refresh_styles(sheet_name)
 
     def _get_col_letter(self, idx: int) -> str:
         """Convert 0-based column index to Excel-style letter (A, B, C...)."""
