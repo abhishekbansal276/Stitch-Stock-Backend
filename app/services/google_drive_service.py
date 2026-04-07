@@ -14,8 +14,9 @@ class GoogleDriveService:
 
     def generate_barcode(self, code_id: str, label: str) -> str:
         """Generates a high-fidelity Code 128 Barcode and archives it in Google Drive."""
-        if not self.script_url or not self.folder_id:
-            return ""
+        import traceback
+        print(f"📁 [BARCODE_GEN] Request for {code_id} ({label})")
+        # traceback.print_stack(limit=5) # Enable if needed for deep trace
 
         try:
             # 1. CREATE BARCODE (Code 128)

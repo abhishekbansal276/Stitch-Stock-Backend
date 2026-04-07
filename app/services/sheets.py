@@ -1322,14 +1322,21 @@ class SheetsService:
             data = rows[1:]
             
             found_idx = -1
-            code_to_find = str(code).strip().upper()
+            code_to_find = self._normalize_code(code)
+            
             for i, row in enumerate(data):
-                if len(row) >= 2 and str(row[1]).strip().upper() == code_to_find:
-                    found_idx = i + 2 # +2 because 1-based and skip header
-                    break
+                if len(row) >= 2:
+                    current_code = self._normalize_code(row[1])
+                    if current_code == code_to_find:
+                        found_idx = i + 2 # +2 because 1-based and skip header
+                        break
             
             if found_idx == -1:
-                # Add new summary row
+                if m_type == "OUT":
+                    print(f"⚠️ [SUMMARY_WARN] Could not find code {code} for deduction. Skipping summary update to avoid duplication.")
+                    return
+
+                # Add new summary row (Only for IN)
                 new_row = [name, code, qty_delta, "PCS", 
                            qty_delta if m_type == "IN" else 0.0,
                            abs(qty_delta) if m_type == "OUT" else 0.0,
@@ -1432,6 +1439,11 @@ class SheetsService:
             result = chr(65 + (idx % 26)) + result
             idx = (idx // 26) - 1
         return result
+
+    def _normalize_code(self, code) -> str:
+        """Standardizes a product code for reliable matching."""
+        if not code: return ""
+        return re.sub(r'[^A-Z0-9]', '', str(code).upper())
 
 
 sheets_service = SheetsService()
