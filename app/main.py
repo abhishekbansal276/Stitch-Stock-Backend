@@ -292,14 +292,12 @@ async def _process_async_ingestion(header: dict, items: list, item_ids: list, us
                     description=item_data.get('Description', '')
                 )
                 
-                # Barcode Archiving
+                # Barcode Archiving (Main Batch ID only)
                 _process_barcode_archiving(item_id, item_data.get('Product Name', 'Stock Item'))
                 
-                for dist in item_data.get('distributions', []):
-                    dist_id = dist.get('dist_id')
-                    dist_label = f"{item_data.get('Product Name')} @ {dist.get('warehouse')}"
-                    if dist_id:
-                        _process_barcode_archiving(dist_id, dist_label, is_position=True, parent_id=item_id)
+                # [OMITTED] Generating individual position QR files in Drive is disabled 
+                # as per user request to keep archive batch-focused.
+                # Position IDs remain available for internal scanning/labels.
                         
             except Exception as item_err:
                 print(f"⚠️ ITEM SYNC FAILURE [{item_id}]: {item_err}")
