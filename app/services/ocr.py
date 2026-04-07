@@ -5,12 +5,15 @@ import time
 import logging
 import base64
 import io
+import hashlib
+from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 from pydantic import BaseModel, Field
 from google import genai
 from google.genai import types
 from groq import Groq
 from PIL import Image
+from app.services.firebase import db
 
 # ── OPTIMIZATION CONFIGURATION ──────────────────────────────────────────────
 MAX_IMAGE_DIMENSION = 1200
@@ -143,6 +146,31 @@ class OCRService:
         mime_type = mime_map[ext]
         logger.info(f"OCRService: Processing '{filename}' ({mime_type})")
 
+        # --- CACHING LAYER (3-HOUR SLIDING EXPIRY) ---
+        file_hash = hashlib.md5(content).hexdigest()
+        cache_ref = db.collection("ocr_extraction_cache").document(file_hash)
+        
+        try:
+            cache_doc = cache_ref.get()
+            if cache_doc.exists:
+                cache_data = cache_doc.to_dict()
+                expires_at = cache_data.get("expires_at")
+                
+                # Check if still valid
+                if expires_at and datetime.fromisoformat(expires_at) > datetime.now():
+                    logger.info(f"🚀 [CACHE HIT] Reusing data for {filename} (Hash: {file_hash})")
+                    print(f"✨ CACHE HIT: Resetting 3h timeline for {file_hash}")
+                    
+                    # RESET CACHE TIMELINE (Next 3 hours)
+                    new_expiry = (datetime.now() + timedelta(hours=3)).isoformat()
+                    cache_ref.update({"expires_at": new_expiry})
+                    
+                    return cache_data["data"]
+                else:
+                    logger.info(f"⚠️ [CACHE EXPIRED] Re-processing {filename}")
+        except Exception as cache_err:
+            logger.warning(f"OCRService: Cache check failed: {cache_err}")
+
         # --- OPTIMIZATION STEP ---
         try:
             content, mime_type = self._optimize_image(content, mime_type)
@@ -153,7 +181,10 @@ class OCRService:
         if self.gemini_client:
             try:
                 res = self._run_gemini_vision(content, mime_type)
-                return self._post_process_results(res)
+                final_res = self._post_process_results(res)
+                # Store in cache before returning
+                self._store_in_cache(file_hash, final_res)
+                return final_res
             except Exception as e:
                 logger.warning(f"OCRService: Stage 1 (Gemini Vision) failed: {e}")
                 if self.groq_client:
@@ -165,17 +196,37 @@ class OCRService:
         if self.groq_client:
             try:
                 res = self._run_groq_vision(content, mime_type)
-                return self._post_process_results(res)
+                final_res = self._post_process_results(res)
+                # Store in cache before returning
+                self._store_in_cache(file_hash, final_res)
+                return final_res
             except Exception as e:
                 logger.error(f"OCRService: Stage 2 (Groq Vision) failed: {e}")
                 # If we get a "model_decommissioned" or 400 error, try rotating and retrying once
                 if "model_decommissioned" in str(e).lower() or "400" in str(e):
                     logger.warning("OCRService: Groq model decommissioned or invalid. Attempting rotation...")
                     self._rotate_groq_model()
-                    return self._run_groq_vision(content, mime_type)
+                    res = self._run_groq_vision(content, mime_type)
+                    final_res = self._post_process_results(res)
+                    self._store_in_cache(file_hash, final_res)
+                    return final_res
                 raise Exception(f"Total extraction failure across all vision providers: {e}")
 
         raise Exception("OCRService: Extraction failed. No working Vision clients available.")
+
+    def _store_in_cache(self, file_hash: str, data: Dict):
+        """Helper to persist results with a 3-hour TTL."""
+        try:
+            expiry = (datetime.now() + timedelta(hours=3)).isoformat()
+            db.collection("ocr_extraction_cache").document(file_hash).set({
+                "hash": file_hash,
+                "data": data,
+                "created_at": datetime.now().isoformat(),
+                "expires_at": expiry
+            })
+            logger.info(f"💾 [CACHE STORE] Saved extraction for key {file_hash}")
+        except Exception as e:
+            logger.error(f"OCRService: Failed to store cache: {e}")
 
     # ── INDIVIDUAL STAGE RUNNERS ──────────────────────────────────────────────
 
