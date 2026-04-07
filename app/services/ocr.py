@@ -13,7 +13,7 @@ from google import genai
 from google.genai import types
 from groq import Groq
 from PIL import Image
-from app.services.firebase import db
+# from app.services.firebase import db # USER DIRECTIVE: Stopped using Firebase for OCR cache
 
 # ── OPTIMIZATION CONFIGURATION ──────────────────────────────────────────────
 MAX_IMAGE_DIMENSION = 1200
@@ -146,30 +146,37 @@ class OCRService:
         mime_type = mime_map[ext]
         logger.info(f"OCRService: Processing '{filename}' ({mime_type})")
 
-        # --- CACHING LAYER (3-HOUR SLIDING EXPIRY) ---
+        # --- LOCAL CACHING LAYER (3-HOUR SLIDING EXPIRY) ---
         file_hash = hashlib.md5(content).hexdigest()
-        cache_ref = db.collection("ocr_extraction_cache").document(file_hash)
+        cache_dir = os.path.join(os.getcwd(), ".ocr_cache")
+        cache_path = os.path.join(cache_dir, f"{file_hash}.json")
         
+        if not os.path.exists(cache_dir):
+            os.makedirs(cache_dir, exist_ok=True)
+
         try:
-            cache_doc = cache_ref.get()
-            if cache_doc.exists:
-                cache_data = cache_doc.to_dict()
-                expires_at = cache_data.get("expires_at")
+            if os.path.exists(cache_path):
+                with open(cache_path, "r", encoding="utf-8") as f:
+                    cache_data = json.load(f)
                 
+                expires_at = cache_data.get("expires_at")
                 # Check if still valid
                 if expires_at and datetime.fromisoformat(expires_at) > datetime.now():
-                    logger.info(f"🚀 [CACHE HIT] Reusing data for {filename} (Hash: {file_hash})")
-                    print(f"✨ CACHE HIT: Resetting 3h timeline for {file_hash}")
+                    logger.info(f"🚀 [LOCAL CACHE HIT] Reusing data for {filename} (Hash: {file_hash})")
+                    print(f"✨ LOCAL CACHE HIT: Resetting 3h timeline for {file_hash}")
                     
                     # RESET CACHE TIMELINE (Next 3 hours)
                     new_expiry = (datetime.now() + timedelta(hours=3)).isoformat()
-                    cache_ref.update({"expires_at": new_expiry})
+                    cache_data["expires_at"] = new_expiry
+                    with open(cache_path, "w", encoding="utf-8") as f:
+                        json.dump(cache_data, f)
                     
                     return cache_data["data"]
                 else:
-                    logger.info(f"⚠️ [CACHE EXPIRED] Re-processing {filename}")
+                    logger.info(f"🗑️ [CACHE EXPIRED] Deleting stale cache for {filename}")
+                    os.remove(cache_path)
         except Exception as cache_err:
-            logger.warning(f"OCRService: Cache check failed: {cache_err}")
+            logger.warning(f"OCRService: Local cache check failed: {cache_err}")
 
         # --- OPTIMIZATION STEP ---
         try:
@@ -215,18 +222,28 @@ class OCRService:
         raise Exception("OCRService: Extraction failed. No working Vision clients available.")
 
     def _store_in_cache(self, file_hash: str, data: Dict):
-        """Helper to persist results with a 3-hour TTL."""
+        """Helper to persist results locally with a 3-hour TTL."""
         try:
+            cache_dir = os.path.join(os.getcwd(), ".ocr_cache")
+            if not os.path.exists(cache_dir):
+                os.makedirs(cache_dir, exist_ok=True)
+                
+            cache_path = os.path.join(cache_dir, f"{file_hash}.json")
             expiry = (datetime.now() + timedelta(hours=3)).isoformat()
-            db.collection("ocr_extraction_cache").document(file_hash).set({
+            
+            payload = {
                 "hash": file_hash,
                 "data": data,
                 "created_at": datetime.now().isoformat(),
                 "expires_at": expiry
-            })
-            logger.info(f"💾 [CACHE STORE] Saved extraction for key {file_hash}")
+            }
+            
+            with open(cache_path, "w", encoding="utf-8") as f:
+                json.dump(payload, f)
+                
+            logger.info(f"💾 [LOCAL CACHE STORE] Saved extraction for key {file_hash}")
         except Exception as e:
-            logger.error(f"OCRService: Failed to store cache: {e}")
+            logger.error(f"OCRService: Failed to store local cache: {e}")
 
     # ── INDIVIDUAL STAGE RUNNERS ──────────────────────────────────────────────
 
