@@ -167,22 +167,57 @@ async def create_stock(
         items = payload.get('items', [])
         user_display = user.get('full_name', user['email'])
         
-        # 1. GENERATE MEANINGFUL IDs UPFRONT
+        # 1. BATCH MERGE: Group items by (Product Code, Batch) to ensure 1 Barcode per Batch
+        import hashlib
+        import re
+        
+        merged_map = {}
+        for item in items:
+            p_code = str(item.get('Product Code') or 'UKN').replace(" ", "").upper()
+            batch  = str(item.get('Batch Number') or 'NB').replace(" ", "").upper()
+            group_key = (p_code, batch)
+            
+            if group_key not in merged_map:
+                merged_map[group_key] = item
+            else:
+                # Merge distributions into the primary record
+                base = merged_map[group_key]
+                base_dists = list(base.get('distributions', []))
+                incoming_dists = list(item.get('distributions', []))
+                base['distributions'] = base_dists + incoming_dists
+                
+                # Update aggregated quantities
+                try:
+                    q1 = float(base.get('Quantity Received', 0))
+                    q2 = float(item.get('Quantity Received', 0))
+                    base['Quantity Received'] = q1 + q2
+                    
+                    b1 = float(base.get('Number of Bags', 0))
+                    b2 = float(item.get('Number of Bags', 0))
+                    base['Number of Bags'] = b1 + b2
+                except: pass
+
+        # Regenerate items list from merged map
+        items = list(merged_map.values())
+
+        # 2. GENERATE DETERMINISTIC 12-DIGIT NUMERIC IDs
         item_ids = []
         for item in items:
             p_code = str(item.get('Product Code') or 'UKN').replace(" ", "").upper()
             batch  = str(item.get('Batch Number') or 'NB').replace(" ", "").upper()
-            # Clean non-alphanumeric chars for barcode safety
-            import re
-            p_code = re.sub(r'[^A-Z0-9]', '', p_code)
-            batch  = re.sub(r'[^A-Z0-9]', '', batch)
             
-            # STK-[CODE]-[BATCH]-[TIMESTAMP_SUFFIX]
-            ts_suffix = str(int(time.time()))[-4:]
-            item_id = item.get('id') or f"STK-{p_code}-{batch}-{ts_suffix}"
+            # Clean non-alphanumeric chars for barcode safety
+            p_code_c = re.sub(r'[^A-Z0-9]', '', p_code)
+            batch_c  = re.sub(r'[^A-Z0-9]', '', batch)
+            
+            # Generate deterministic 12-digit ID: int(sha256(seed)) % 10^12
+            seed = f"{p_code_c}-{batch_c}".encode()
+            numeric_hash = int(hashlib.sha256(seed).hexdigest(), 16)
+            item_id = str(numeric_hash % 10**12).zfill(12)
             
             item_ids.append(item_id)
             item['id'] = item_id # Ensure ID is present for background tasks
+            item['barcode_id'] = item_id
         
         print(f"🚀 INGESTION START: Received {len(items)} items. IDs: {item_ids}")
 

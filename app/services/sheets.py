@@ -297,6 +297,17 @@ class SheetsService:
 
         # ── 1.5 MERGE SUPER HEADERS ───────────────────────────────────────────
         if title in ["Stock Register", "Stock Movements", "Stock Summary"]:
+            # Clear existing merges first to avoid "select all cells in range" errors during overlaps
+            requests.append({
+                "unmergeCells": {
+                    "range": {
+                        "sheetId": sheet_id,
+                        "startRowIndex": 0, "endRowIndex": 1,
+                        "startColumnIndex": 0, "endColumnIndex": num_cols
+                    }
+                }
+            })
+
             if title == "Stock Register":
                 # Adjusted for new Storage Type column at index 10
                 super_spans = [(0, 2), (2, 4), (4, 7), (7, 11), (11, 13), (13, 17), (17, 19), (19, 26)]
@@ -898,7 +909,7 @@ class SheetsService:
             # Index for fast search
             existing_reg_barcode = {str(r[b_id_idx]).strip(): i+1 for i, r in enumerate(reg_rows) if len(r) > b_id_idx}
             existing_reg_code    = {str(r[code_idx]).strip(): i+1 for i, r in enumerate(reg_rows) if len(r) > code_idx}
-            summary_idx          = {str(r[1]).strip(): i+1 for i, r in enumerate(sum_rows) if len(r) > 1}
+            summary_idx          = {str(r[1]).strip().upper(): i+1 for i, r in enumerate(sum_rows) if len(r) > 1}
             
             # Cache summary data in memory for accumulation
             summary_data_map = {}
@@ -906,7 +917,7 @@ class SheetsService:
                 if i == 0: continue # SKIP HEADER
                 if len(r) >= 2:
                     code_key = str(r[1]).strip().upper()
-                    if code_key and code_key != "PRODUCT CODE":
+                    if code_key and code_key != "PRODUCT CODE" and code_key not in summary_data_map:
                         summary_data_map[code_key] = {
                             "row": i + 1,
                             "name": r[0],
@@ -1005,10 +1016,31 @@ class SheetsService:
                     wh_id = dist.get("warehouse_id") or "default"
                     movements_append.append([now, name, "IN", d_qty, d_wh, d_loc, user_display, f"MOV-{uuid.uuid4().hex[:6].upper()}", item_id, trans_id, d_id, wh_id])
 
-            # ── C. Summary Update ──
-            code_key = code.upper()
+        # ── 3. CONSOLIDATE SUMMARY UPDATES ────────────────────────────────────
+        # To avoid duplicate rows and incorrect appends, we aggregate all 
+        # changes for this session by Product Code first.
+        session_summary_map = {} # code_key: {name, code, qty, unit, row_idx}
+        for item in items:
+            code = str(item.get("Product Code") or "").strip().upper()
+            if not code: continue
+            
+            qty = self._to_float(item.get("Quantity Received") or 0)
+            name = item.get("Product Name") or "Item"
+            unit = item.get("Unit") or "PCS"
+            
+            if code not in session_summary_map:
+                session_summary_map[code] = {"name": name, "code": code, "qty": 0.0, "unit": unit}
+            session_summary_map[code]["qty"] += qty
+
+        for code_key, session_data in session_summary_map.items():
+            qty = session_data["qty"]
+            name = session_data["name"]
+            unit = session_data["unit"]
+            code = session_data["code"] # Preservation of case if needed, but we use upper for map
+
             s_entry = summary_data_map.get(code_key)
             if s_entry:
+                # Update existing row
                 s_entry["balance"] += qty
                 s_entry["received"] += qty
                 updates_batch.append({
@@ -1016,11 +1048,12 @@ class SheetsService:
                     "values": [[s_entry["name"], code, s_entry["balance"], s_entry["unit"], s_entry["received"], s_entry["dispatched"], now]]
                 })
             else:
+                # Append new row
                 summary_appends.append([name, code, qty, unit, qty, 0, now])
-                # Add to map so if same code appears twice in batch, we update it rather than append again
+                # Update internal map to prevent double-appending if same code used later (though already merged above)
                 summary_data_map[code_key] = {"row": len(sum_rows) + len(summary_appends), "name": name, "balance": qty, "unit": unit, "received": qty, "dispatched": 0}
 
-        # ── 3. EXECUTE SHIPMENT ───────────────────────────────────────────────
+        # ── 4. EXECUTE SHIPMENT ───────────────────────────────────────────────
         try:
             # First, standard value updates (Upserts)
             if updates_batch:
@@ -1029,7 +1062,7 @@ class SheetsService:
                     body={"valueInputOption": "USER_ENTERED", "data": updates_batch}
                 ).execute()
 
-            # Second, Appends (Done via batchUpdate with AppendCells to be fast if many, or just append)
+            # Second, Appends (Done via batchUpdate with AppendCells or just append)
             for title, data in [("Stock Register", register_appends), ("Stock Movements", movements_append), ("Stock Summary", summary_appends)]:
                 if data:
                     self.service.spreadsheets().values().append(
