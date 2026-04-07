@@ -257,34 +257,61 @@ async def _process_async_ingestion(header: dict, items: list, item_ids: list, us
         total_qty_combined = 0.0
         invoice_num = header.get('Invoice Number', 'INV-N/A')
         supplier = header.get('Supplier Name', 'N/A')
+        log_details = [] # Container for rich metadata
+
+        # 2. Process Individual Items
+        total_items_in_batch = len(item_ids)
+        total_qty_combined = 0.0
+        invoice_num = header.get('Invoice Number', 'INV-N/A')
+        supplier = header.get('Supplier Name', 'N/A')
+        log_details = [] # Container for rich metadata
 
         for i, item_id in enumerate(item_ids):
             try:
                 item_data = items[i]
                 
-                # Firestore Save (Idempotent check)
+                # Firestore Save (New Upsert/Aggregation Logic)
                 distributions = item_data.get('distributions', [
                     {'loc_id': 'default', 'loc_name': 'Main Floor', 'qty': item_data.get('Quantity Received', 0)}
                 ])
                 
-                # Only save to Firestore if it doesn't already exist (Avoid overwriting app-side write)
-                doc_ref = inventory_service.collection.document(item_id)
-                if not doc_ref.get().exists:
-                    inventory_service.save_position(
-                        item_id, item_data.get('Product Name'), 
-                        item_data.get('Product Code'), 
-                        item_data.get('Unit', 'PCS'),
-                        distributions,
-                        supplier_name=header.get('Supplier Name'),
-                        batch_number=item_data.get('batch_number') or item_data.get('Batch Number'),
-                        storage_type=item_data.get('storage_type', 'UNIT'),
-                        number_of_bags=item_data.get('number_of_bags') or item_data.get('Number of Bags', 0),
-                        user_name=user_display
-                    )
+                # Upsert to Firestore: Finds existing doc by Product/Batch or creates Auto-ID doc
+                # Returns the doc_id (Auto-ID) instead of using item_id as key
+                doc_id = inventory_service.upsert_position(
+                    barcode_id=item_id, # This is the unique label ID
+                    product_name=item_data.get('Product Name'), 
+                    product_code=item_data.get('Product Code'), 
+                    unit=item_data.get('Unit', 'PCS'),
+                    distributions=distributions,
+                    supplier_name=header.get('Supplier Name'),
+                    batch_number=item_data.get('batch_number') or item_data.get('Batch Number'),
+                    storage_type=item_data.get('storage_type', 'UNIT'),
+                    number_of_bags=item_data.get('number_of_bags') or item_data.get('Number of Bags', 0),
+                    user_name=user_display,
+                    is_merged=item_data.get('is_merged', False)
+                )
                 
+                # Use the new doc_id (Auto-ID) from here on 🚀
+                doc_ref = inventory_service.collection.document(doc_id)
+
                 # Update link if generated
                 if item_data.get('Barcode Link'):
-                    doc_ref.update({'barcode_link': item_data['Barcode Link']})
+                    inventory_service.update_barcode_link(doc_id, item_data['Barcode Link'])
+
+                # Accumulate for Single Activity Log (FIXED: actually increment volume)
+                item_qty = float(item_data.get('Quantity Received', 0))
+                total_qty_combined += item_qty
+                
+                # Build rich metadata for this entry
+                log_details.append({
+                    'product_name': item_data.get('Product Name'),
+                    'product_code': item_data.get('Product Code'),
+                    'batch': item_data.get('batch_number') or item_data.get('Batch Number'),
+                    'qty': item_qty,
+                    'unit': item_data.get('Unit', 'MT'),
+                    'bags': item_data.get('Number of Bags', 0),
+                    'locations': [d.get('loc_name', 'Main') for d in distributions]
+                })
 
                 # MARK AS SYNCED ✅
                 doc_ref.update({'sync_status': 'synced', 'sync_at': int(time.time())})
@@ -302,7 +329,8 @@ async def _process_async_ingestion(header: dict, items: list, item_ids: list, us
             product_code=f"{total_items_in_batch} Identities",
             qty_change=total_qty_combined,
             location=supplier,
-            description=f"Batch Ingestion of {total_items_in_batch} stock items into warehouse registry."
+            description=f"Batch Ingestion of {total_items_in_batch} stock items into warehouse registry.",
+            details=log_details
         )
 
         print(f"✅ BATCH SYNC COMPLETED: {item_ids}")
@@ -348,13 +376,19 @@ async def get_stock_item(
     """
     Fetch details + Spatial Positions (from Firestore).
     """
-    item = sheets_service.get_stock_item(stock_item_id)
+    # 1. Try to find Position in Firestore first (to resolve doc_id -> barcode_id)
+    pos = inventory_service.get_position(stock_item_id)
+    search_id = pos.get('barcode_id', stock_item_id) if pos else stock_item_id
+
+    # 2. Get master details from Sheets
+    item = sheets_service.get_stock_item(search_id)
     if not item:
         raise HTTPException(status_code=404, detail="Stock item not found")
         
-    pos = inventory_service.get_position(stock_item_id)
     if pos:
         item['distributions'] = pos.get('distributions', [])
+        item['doc_id'] = pos.get('doc_id')
+        item['barcode_ids'] = pos.get('barcode_ids', [])
         
     return item
 

@@ -5,8 +5,8 @@ from google.cloud.firestore_v1.base_query import FieldFilter
 from app.services.fcm_service import fcm_service
 
 class ActivityService:
-    def log_and_notify(self, user: Dict[str, Any], action_type: str, item_name: str, product_code: str, qty_change: float, location: str, description: str = ""):
-        """Standardized Log & Alert Engine."""
+    def log_and_notify(self, user: Dict[str, Any], action_type: str, item_name: str, product_code: str, qty_change: float, location: str, description: str = "", details: Optional[list] = None):
+        """Standardized Log & Alert Engine with itemized metadata support."""
         try:
             # 1. Create the Audit Log Entry
             user_name = user.get('full_name', user['email'])
@@ -22,6 +22,7 @@ class ActivityService:
                 'actor_name': user_name,
                 'actor_email': user['email'],
                 'actor_role': user_role,
+                'details': details or [],
                 'created_at': int(time.time())
             }
             

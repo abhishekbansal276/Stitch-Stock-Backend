@@ -12,86 +12,134 @@ class InventoryService:
         self.collection = db.collection('inventory_positions')
         self.index_collection = db.collection('position_cross_index')
 
-    def save_position(self, barcode_id: str, product_name: str, product_code: str, 
-                      unit: str, distributions: List[Dict], 
-                      supplier_name: str = None, batch_number: str = None,
-                      storage_type: str = "UNIT", number_of_bags: int = 0,
-                      user_name: str = "System"):
+    def upsert_position(self, barcode_id: str, product_name: str, product_code: str, 
+                       unit: str, distributions: List[Dict], 
+                       supplier_name: str = None, batch_number: str = None,
+                       storage_type: str = "UNIT", number_of_bags: int = 0,
+                       user_name: str = "System", is_merged: bool = False):
         """
-        Stores the spatial distribution of a stock item in Firestore.
-        distributions: [{'warehouse': 'DC1', 'location': 'Row 7', 'qty': 10, 'dist_id': 'UID'}, ...]
+        UPGRADED: One Doc per Product/Batch.
+        Instead of using barcode_id as DocID, we query for existing doc first.
         """
-        # Ensure every distribution split has a unique traceable ID
+        # ── 1. FIND TARGET DOCUMENT ──
+        query = self.collection.where(filter=FieldFilter('product_code', '==', product_code))
+        
+        # If not merged, we are batch-specific. If merged, we aggregate ALL of this product.
+        if not is_merged and batch_number:
+            query = query.where(filter=FieldFilter('batch_number', '==', batch_number))
+        elif is_merged:
+            query = query.where(filter=FieldFilter('batch_number', '==', 'AGGREGATED'))
+
+        docs = list(query.limit(1).stream())
+        
+        doc_ref = None
+        existing_data = {}
+        
+        if docs:
+            doc_ref = docs[0].reference
+            existing_data = docs[0].to_dict()
+            print(f"📦 UPSERT: Found existing document for {product_code} ({doc_ref.id})")
+        else:
+            # Create new doc with AUTO-ID 🚀
+            doc_ref = self.collection.document() # Firestore auto-id
+            print(f"🆕 UPSERT: Creating new document for {product_code} ({doc_ref.id})")
+
+        # ── 2. PREPARE DISTRIBUTIONS ──
+        current_dists = existing_data.get('distributions', [])
+        
+        # Ensure new dists have traceable IDs
         for d in distributions:
             if not d.get('dist_id') or d.get('dist_id') == 'AUTO':
-                # Deterministic 12-digit ID: Hash(ParentID + Batch + Warehouse + Location)
-                # Including Batch in the seed ensures that even if batches are merged into 1 barcode,
-                # each batch-location pair has a unique 12-digit ID.
-                batch_seed = d.get('batch_number') or batch_number or 'NB'
-                seed = f"{barcode_id}-{batch_seed}-{d.get('warehouse')}-{d.get('location')}"
+                seed = f"{barcode_id}-{d.get('warehouse')}-{d.get('location')}"
                 d['dist_id'] = generate_12_digit_hash(seed)
-            
-            # Ensure the distribution itself explicitly stores its batch_number for UI visibility
             if not d.get('batch_number'):
                 d['batch_number'] = batch_number or 'NB'
         
-        total_qty = sum(float(d.get('qty', 0)) for d in distributions if d.get('qty'))
-        # Store flat list of warehouses and specific locations for search
+        # MERGE LOGIC: If a location (warehouse + location_name) already exists, add to its qty
+        merged_dists = current_dists.copy()
+        for new_d in distributions:
+            found_idx = -1
+            for idx, old_d in enumerate(merged_dists):
+                if old_d.get('warehouse') == new_d.get('warehouse') and \
+                   old_d.get('location') == new_d.get('location'):
+                    found_idx = idx
+                    break
+            
+            if found_idx >= 0:
+                merged_dists[found_idx]['qty'] = float(merged_dists[found_idx].get('qty', 0)) + float(new_d.get('qty', 0))
+                # Also aggregate bags if applicable
+                if 'bags' in new_d:
+                    merged_dists[found_idx]['bags'] = int(merged_dists[found_idx].get('bags', 0)) + int(new_d.get('bags', 0))
+            else:
+                merged_dists.append(new_d)
+
+        # ── 3. FINALIZE DATA ──
+        total_qty = sum(float(d.get('qty', 0)) for d in merged_dists)
+        total_bags = int(existing_data.get('number_of_bags', 0)) + int(number_of_bags)
+        
+        # Track all barcode IDs associated with this document
+        barcode_ids = existing_data.get('barcode_ids', [])
+        if barcode_id not in barcode_ids:
+            barcode_ids.append(barcode_id)
+
+        # Search index calculation
         search_locations = []
-        for d in distributions:
+        for d in merged_dists:
             if float(d.get('qty', 0)) > 0:
                 search_locations.append(d.get('warehouse'))
-                search_locations.append(d.get('warehouse_id'))
                 search_locations.append(d.get('dist_id'))
                 search_locations.append(f"{d.get('warehouse')} - {d.get('location')}")
-        
-        doc_ref = self.collection.document(barcode_id)
-        existing = doc_ref.get()
-        min_stock = 0
-        if existing.exists:
-            min_stock = existing.to_dict().get('min_stock_level', 0)
 
         doc_data = {
-            'barcode_id': barcode_id,
+            'doc_id': doc_ref.id, 
+            'barcode_id': barcode_id, # Latest barcode as primary ref
+            'barcode_ids': barcode_ids,
             'product_name': product_name,
             'product_code': product_code,
             'unit': unit,
             'total_qty': total_qty,
-            'distributions': distributions,
+            'distributions': merged_dists,
             'location_ids': list(set([l for l in search_locations if l])),
-            'min_stock_level': min_stock,
-            'supplier_name': supplier_name,
-            'batch_number': batch_number,
+            'min_stock_level': existing_data.get('min_stock_level', 0),
+            'supplier_name': supplier_name or existing_data.get('supplier_name'),
+            'batch_number': 'AGGREGATED' if is_merged else (batch_number or existing_data.get('batch_number')),
             'storage_type': storage_type,
-            'number_of_bags': number_of_bags,
-            'created_by': user_name,
+            'number_of_bags': total_bags,
+            'created_by': existing_data.get('created_by', user_name),
             'updated_by': user_name,
-            'updated_at': int(time.time())
+            'updated_at': int(time.time()),
+            'is_merged': is_merged
         }
+        
+        # If existing doc has a barcode link, keep it (unless we want to overwrite with newest)
+        if existing_data.get('barcode_link'):
+            doc_data['barcode_link'] = existing_data['barcode_link']
+
         doc_ref.set(doc_data)
         
         # ── CROSS-INDEX UPDATE ──
-        self._update_cross_index(barcode_id, distributions)
+        self._update_cross_index(doc_ref.id, merged_dists)
+        return doc_ref.id
 
-    def get_existing_barcode(self, barcode_id: str) -> str:
-        """Returns existing barcode link if available in Firestore."""
-        doc = self.collection.document(barcode_id).get()
+    def get_existing_barcode(self, doc_id: str) -> str:
+        """Returns existing barcode link from doc_id."""
+        doc = self.collection.document(doc_id).get()
         if doc.exists:
             return doc.to_dict().get("barcode_link", "")
         return ""
 
-    def get_existing_qr(self, barcode_id: str, dist_id: str) -> str:
-        """Returns existing QR link for a specific position distribution."""
-        doc = self.collection.document(barcode_id).get()
+    def get_existing_qr(self, doc_id: str, dist_id: str) -> str:
+        """Returns existing QR link for a specific distribution."""
+        doc = self.collection.document(doc_id).get()
         if doc.exists:
             for dist in doc.to_dict().get("distributions", []):
                 if dist.get("dist_id") == dist_id:
                     return dist.get("qr_link", "")
         return ""
 
-    def get_position(self, barcode_id: str) -> Dict:
-        """Fetches the current spatial map for a barcode."""
-        doc = self.collection.document(barcode_id).get()
+    def get_position(self, doc_id: str) -> Dict:
+        """Fetches the current spatial map from doc_id."""
+        doc = self.collection.document(doc_id).get()
         if doc.exists:
             return doc.to_dict()
         return {}
@@ -115,34 +163,35 @@ class InventoryService:
 
     def find_by_dist_id(self, dist_id: str) -> Dict:
         """
-        Robust search for a stock item by its specific shelf/zone position ID.
-        Uses a two-tier O(1) direct lookup system for 100% reliability.
+        Robust search for a stock item by its specific shelf/zone position ID OR main Barcode ID.
+        Uses a three-tier discovery system.
         """
-        # ── TIER 1: CROSS-INDEX LOOKUP (Absolute Reliability) ──
+        # ── TIER 1: CROSS-INDEX LOOKUP (Location Discovery) ──
         idx_doc = self.index_collection.document(dist_id).get()
         if idx_doc.exists:
             map_data = idx_doc.to_dict()
-            parent_id = map_data.get('barcode_id')
-            if parent_id:
-                parent_doc = self.collection.document(parent_id).get()
-                if parent_doc.exists:
-                    data = parent_doc.to_dict()
+            doc_id = map_data.get('barcode_id') # In code, we often use 'barcode_id' for 'doc_ref_id'
+            if doc_id:
+                doc = self.collection.document(doc_id).get()
+                if doc.exists:
+                    data = doc.to_dict()
                     target_dist = next((d for d in data.get('distributions', []) if d.get('dist_id') == dist_id), None)
                     return {"item": data, "target_distribution": target_dist}
 
-        # ── TIER 2: DIRECT BARCODE LOOKUP (Fallback for main labels) ──
+        # ── TIER 2: MAIN BARCODE ARRAY SEARCH ──
+        # Search the 'barcode_ids' array for the scanned ID
+        query = self.collection.where(filter=FieldFilter('barcode_ids', 'array_contains', dist_id)).limit(1).get()
+        if query:
+            data = query[0].to_dict()
+            # If scanning a main product label, target the first distribution as default
+            target_dist = data.get('distributions', [None])[0]
+            return {"item": data, "target_distribution": target_dist}
+
+        # ── TIER 3: LEGACY DIRECT LOOKUP (Compatibility) ──
         doc = self.collection.document(dist_id).get()
         if doc.exists:
             data = doc.to_dict()
             return {"item": data, "target_distribution": data.get('distributions', [None])[0]}
-
-        # ── TIER 3: ARRAY INDEX SEARCH (Safety Fallback) ──
-        query = self.collection.where(filter=FieldFilter('location_ids', 'array_contains', dist_id)).limit(1).get()
-        if query:
-            doc = query[0]
-            data = doc.to_dict()
-            target_dist = next((d for d in data.get('distributions', []) if d.get('dist_id') == dist_id), None)
-            return {"item": data, "target_distribution": target_dist}
             
         print(f"⚠️ DISPATCH FAILED: Position {dist_id} not found in any index.")
         return {}
@@ -187,7 +236,7 @@ class InventoryService:
 
     @staticmethod
     @firestore.transactional
-    def deduct_from_location(transaction, doc_ref, loc_id: str, qty: float):
+    def deduct_from_location(transaction, doc_ref, loc_id: str, qty: float, bags_removed: float = 0):
         """Atomic deduction from a specific shelf/zone ID."""
         print(f"📉 [DEDUCTION] Attempting to remove {qty} from location {loc_id} of item {doc_ref.id}")
         """Atomic deduction from a specific shelf/zone ID."""
@@ -203,10 +252,13 @@ class InventoryService:
         for dist in distributions:
             if dist.get('dist_id') == loc_id:
                 curr_qty = float(dist.get('qty', 0))
+                curr_bags = float(dist.get('bags', 0))
+                
                 if curr_qty < qty - 0.001:
-                    # If it's marginally less, we just set to 0 (floating point safety)
                     qty = curr_qty
+                
                 dist['qty'] = float(curr_qty - qty)
+                dist['bags'] = float(max(0, curr_bags - bags_removed))
                 found = True
             new_distributions.append(dist)
             
@@ -214,7 +266,9 @@ class InventoryService:
             raise Exception(f"Position ID {loc_id} not found for this item.")
             
         old_total = float(data.get('total_qty', 0))
+        old_bags = float(data.get('number_of_bags', 0))
         new_total = old_total - qty
+        new_bags = max(0, old_bags - bags_removed)
         
         # Update searchable locations index
         search_locations = []
@@ -248,14 +302,15 @@ class InventoryService:
         transaction.update(doc_ref, {
             'distributions': new_distributions,
             'total_qty': float(max(0, new_total)),
+            'number_of_bags': float(new_bags),
             'location_ids': new_location_ids,
             'updated_at': int(time.time())
         })
         return new_total
 
-    def remove_stock_spatial(self, barcode_id: str, loc_id: str, qty: float, user: dict = None, bags_removed: float = 0, skip_deduction: bool = False):
+    def remove_stock_spatial(self, doc_id: str, loc_id: str, qty: float, user: dict = None, bags_removed: float = 0, skip_deduction: bool = False):
         """Wrapper to perform a safe atomic deduction or just an audit/alert check."""
-        doc_ref = self.collection.document(barcode_id)
+        doc_ref = self.collection.document(doc_id)
         
         if skip_deduction:
             print(f"📖 [AUDIT_MODE] Stock {barcode_id} removal (Audit Check Only)")
@@ -267,7 +322,7 @@ class InventoryService:
             print(f"⚡ [DEDUCTION_MODE] Stock {barcode_id} removal from location {loc_id}")
             transaction = db.transaction()
             # We must pass the transaction object to the internal logic
-            new_total = self.deduct_from_location(transaction, doc_ref, loc_id, qty)
+            new_total = self.deduct_from_location(transaction, doc_ref, loc_id, qty, bags_removed=bags_removed)
         
         # ── SYNC TO SHEETS ──
         try:
@@ -278,7 +333,7 @@ class InventoryService:
             user_display = user.get('full_name', user['email']) if user else "System"
             
             sheets_service.record_dispatch(
-                barcode_id=barcode_id,
+                barcode_id=data.get('barcode_id', doc_id), # Consolidate to primary barcode
                 qty=qty,
                 bags_removed=bags_removed,
                 warehouse=dist.get('warehouse', 'Main Floor'),
@@ -333,16 +388,16 @@ class InventoryService:
             })
         return items
 
-    def set_min_stock_level(self, barcode_id: str, min_level: float):
+    def set_min_stock_level(self, doc_id: str, min_level: float):
         """Admin override for threshold alerts."""
-        self.collection.document(barcode_id).update({
+        self.collection.document(doc_id).update({
             'min_stock_level': min_level,
             'updated_at': int(time.time())
         })
 
-    def update_barcode_link(self, barcode_id: str, link: str):
+    def update_barcode_link(self, doc_id: str, link: str):
         """Updates the stored link to the cloud-archived barcode image."""
-        self.collection.document(barcode_id).update({
+        self.collection.document(doc_id).update({
             'barcode_link': link,
             'updated_at': int(time.time())
         })
@@ -433,8 +488,8 @@ class InventoryService:
         self._update_cross_index(data.get('barcode_id'), cleaned_distributions)
         return True
 
-    def transfer_stock(self, barcode_id: str, from_loc_id: str, to_loc_id: str, to_loc_name: str, qty: float):
-        doc_ref = self.collection.document(barcode_id)
+    def transfer_stock(self, doc_id: str, from_loc_id: str, to_loc_id: str, to_loc_name: str, qty: float):
+        doc_ref = self.collection.document(doc_id)
         transaction = db.transaction()
         return self.execute_transfer(transaction, doc_ref, from_loc_id, to_loc_id, to_loc_name, qty)
 

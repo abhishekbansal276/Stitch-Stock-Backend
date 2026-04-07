@@ -71,8 +71,8 @@ class SheetsService:
         "Movement ID", "Barcode ID", "Transaction ID", "Position ID", "Warehouse ID",
     ]
     SUMMARY_SCHEMA = [
-        "Product Name", "Product Code", "Current Balance", "Unit",
-        "Total Received", "Total Dispatched", "Last Updated",
+        "Product Name", "Product Code", "Current Balance", "Current Bags", "Unit",
+        "Total Received", "Total Dispatched", "Total Bags Received", "Total Bags Dispatched", "Last Updated",
     ]
 
     # Column widths (pixels) — tuned per sheet for readability
@@ -109,7 +109,7 @@ class SheetsService:
         6: 170, 7: 140, 8: 170, 9: 150, 10: 130, 11: 140,
     }
     SUMMARY_COL_WIDTHS = {
-        0: 220, 1: 130, 2: 140, 3: 80, 4: 140, 5: 150, 6: 160,
+        0: 220, 1: 130, 2: 130, 3: 110, 4: 80, 5: 130, 6: 130, 7: 130, 8: 130, 9: 160,
     }
 
     SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
@@ -223,7 +223,7 @@ class SheetsService:
                 range_target = f"{title}!1:2"
             elif title == "Stock Summary":
                 super_row = [
-                    "PRODUCT INFO", "", "LIVE INVENTORY", "", "VOLUME ACTIVITY", "", "SYSTEM INFO"
+                    "PRODUCT INFO", "", "LIVE INVENTORY", "", "", "VOLUME UNIT", "", "VOLUME BAGS", "", "SYSTEM INFO"
                 ]
                 values = [super_row, schema]
                 range_target = f"{title}!1:2"
@@ -314,7 +314,7 @@ class SheetsService:
             elif title == "Stock Movements":
                 super_spans = [(0, 2), (2, 7), (7, 12)]
             elif title == "Stock Summary":
-                super_spans = [(0, 2), (2, 4), (4, 6), (6, 7)]
+                super_spans = [(0, 2), (2, 5), (5, 7), (7, 9), (9, 10)]
             else:
                 super_spans = []
 
@@ -895,7 +895,8 @@ class SheetsService:
             # Fetch lookups for Register (Barcode IDs) and Summary (Product Codes)
             # Use dynamic range for Register
             reg_max_col = self._get_col_letter(len(self.BASE_SCHEMA) - 1)
-            lookup_ranges = [f"Stock Register!A:{reg_max_col}", "Stock Summary!A:G"]
+            sum_max_col = self._get_col_letter(len(self.SUMMARY_SCHEMA) - 1)
+            lookup_ranges = [f"Stock Register!A:{reg_max_col}", f"Stock Summary!A:{sum_max_col}"]
             batch_res = self.service.spreadsheets().values().batchGet(
                 spreadsheetId=self.spreadsheet_id,
                 ranges=lookup_ranges
@@ -925,9 +926,12 @@ class SheetsService:
                             "row": i + 1,
                             "name": r[0],
                             "balance": self._to_float(r[2]),
-                            "unit": r[3],
-                            "received": self._to_float(r[4]),
-                            "dispatched": self._to_float(r[5])
+                            "bags_balance": self._to_float(r[3]) if len(r) > 3 else 0.0,
+                            "unit": r[4] if len(r) > 4 else "PCS",
+                            "received": self._to_float(r[5]) if len(r) > 5 else 0.0,
+                            "dispatched": self._to_float(r[6]) if len(r) > 6 else 0.0,
+                            "bags_received": self._to_float(r[7]) if len(r) > 7 else 0.0,
+                            "bags_dispatched": self._to_float(r[8]) if len(r) > 8 else 0.0
                         }
         except Exception as e:
             print(f"Sheets Bulk Lookup Error: {e}")
@@ -947,6 +951,7 @@ class SheetsService:
             name = str(item.get("Product Name") or header.get("Product Name") or "Unknown Item").strip()
             code = str(item.get("Product Code") or header.get("Product Code") or item_id[:8]).strip()
             qty  = self._to_float(item.get("Quantity Received") or header.get("Quantity Received") or 0)
+            bags = self._to_float(item.get("Number of Bags") or item.get("bags") or 0)
             unit = str(item.get("Unit") or header.get("Unit") or "PCS").strip()
 
             # Safety: Skip 'Ghost' entries
@@ -1048,29 +1053,45 @@ class SheetsService:
             unit = item.get("Unit") or "PCS"
             
             if code not in session_summary_map:
-                session_summary_map[code] = {"name": name, "code": code, "qty": 0.0, "unit": unit}
+                session_summary_map[code] = {"name": name, "code": code, "qty": 0.0, "bags": 0.0, "unit": unit}
             session_summary_map[code]["qty"] += qty
+            session_summary_map[code]["bags"] += bags
 
         for code_key, session_data in session_summary_map.items():
             qty = session_data["qty"]
+            bags = session_data["bags"]
             name = session_data["name"]
             unit = session_data["unit"]
-            code = session_data["code"] # Preservation of case if needed, but we use upper for map
+            code = session_data["code"]
 
             s_entry = summary_data_map.get(code_key)
             if s_entry:
                 # Update existing row
                 s_entry["balance"] += qty
+                s_entry["bags_balance"] += bags
                 s_entry["received"] += qty
+                s_entry["bags_received"] += bags
+                
+                sum_range = f"Stock Summary!A{s_entry['row']}:J{s_entry['row']}"
+                row_vals = [
+                    s_entry["name"], code, s_entry["balance"], s_entry["bags_balance"], 
+                    s_entry["unit"], s_entry["received"], s_entry["dispatched"], 
+                    s_entry["bags_received"], s_entry["bags_dispatched"], now
+                ]
                 updates_batch.append({
-                    "range": f"Stock Summary!A{s_entry['row']}:G{s_entry['row']}",
-                    "values": [[s_entry["name"], code, s_entry["balance"], s_entry["unit"], s_entry["received"], s_entry["dispatched"], now]]
+                    "range": sum_range,
+                    "values": [row_vals]
                 })
             else:
                 # Append new row
-                summary_appends.append([name, code, qty, unit, qty, 0, now])
-                # Update internal map to prevent double-appending if same code used later (though already merged above)
-                summary_data_map[code_key] = {"row": len(sum_rows) + len(summary_appends), "name": name, "balance": qty, "unit": unit, "received": qty, "dispatched": 0}
+                summary_appends.append([name, code, qty, bags, unit, qty, 0, bags, 0, now])
+                # Update internal map to prevent double-appending if same code used later
+                summary_data_map[code_key] = {
+                    "row": len(sum_rows) + len(summary_appends), 
+                    "name": name, "balance": qty, "bags_balance": bags, 
+                    "unit": unit, "received": qty, "dispatched": 0,
+                    "bags_received": bags, "bags_dispatched": 0
+                }
 
         # ── 4. EXECUTE SHIPMENT ───────────────────────────────────────────────
         try:
@@ -1321,7 +1342,7 @@ class SheetsService:
             p_code = code_res.get("values", [[""]])[0][0]
             
             if p_code:
-                self._update_summary_row(p_name, p_code, -qty, "OUT")
+                self._update_summary_row(p_name, p_code, -qty, "OUT", bags_delta=-bags_removed)
 
             print(f"✅ Sheets Sync: Deducted {qty} of {p_name} ({barcode_id})")
 
@@ -1329,15 +1350,14 @@ class SheetsService:
             print(f"Sheets Record Dispatch Error: {e}")
             traceback.print_exc()
 
-    def _update_summary_row(self, name: str, code: str, qty_delta: float, m_type: str):
+    def _update_summary_row(self, name: str, code: str, qty_delta: float, m_type: str, bags_delta: float = 0.0):
         """Helper to update the aggregate balance and totals in Stock Summary."""
         if not self.service: return
         try:
             res = self.service.spreadsheets().values().get(
-                spreadsheetId=self.spreadsheet_id, range="Stock Summary!A:G"
+                spreadsheetId=self.spreadsheet_id, range="Stock Summary!A:J"
             ).execute()
             rows = res.get("values", [])
-            header = rows[0] if rows else self.SUMMARY_SCHEMA
             data = rows[1:]
             
             found_idx = -1
@@ -1350,33 +1370,51 @@ class SheetsService:
                         found_idx = i + 2 # +2 because 1-based and skip header
                         break
             
+            now = self._get_now_ist()
             if found_idx == -1:
                 if m_type == "OUT":
-                    print(f"⚠️ [SUMMARY_WARN] Could not find code {code} for deduction. Skipping summary update to avoid duplication.")
+                    print(f"⚠️ [SUMMARY_WARN] Could not find code {code} for deduction.")
                     return
 
                 # Add new summary row (Only for IN)
-                new_row = [name, code, qty_delta, "PCS", 
-                           qty_delta if m_type == "IN" else 0.0,
-                           abs(qty_delta) if m_type == "OUT" else 0.0,
-                           self._get_now_ist()]
+                # ["Product Name", "Product Code", "Balance", "Bags", "Unit", "Total Rec.", "Total Disp.", "Bags Rec.", "Bags Disp.", "Last Updated"]
+                new_row = [
+                    name, code, qty_delta, bags_delta, "PCS", 
+                    qty_delta, 0.0,  # Total Qty Rec, Total Qty Disp
+                    bags_delta, 0.0, # Total Bags Rec, Total Bags Disp
+                    now
+                ]
                 self._append_row("Stock Summary", new_row)
             else:
                 curr_row = data[found_idx - 2]
+                # Indices: 2:Bal, 3:Bags, 4:Unit, 5:RecQty, 6:DispQty, 7:RecBags, 8:DispBags, 9:Time
                 curr_bal = self._to_float(curr_row[2]) if len(curr_row) > 2 else 0.0
-                curr_in = self._to_float(curr_row[4]) if len(curr_row) > 4 else 0.0
-                curr_out = self._to_float(curr_row[5]) if len(curr_row) > 5 else 0.0
+                curr_bags = self._to_float(curr_row[3]) if len(curr_row) > 3 else 0.0
+                curr_in_qty = self._to_float(curr_row[5]) if len(curr_row) > 5 else 0.0
+                curr_out_qty = self._to_float(curr_row[6]) if len(curr_row) > 6 else 0.0
+                curr_in_bags = self._to_float(curr_row[7]) if len(curr_row) > 7 else 0.0
+                curr_out_bags = self._to_float(curr_row[8]) if len(curr_row) > 8 else 0.0
                 
                 new_bal = curr_bal + qty_delta
-                new_in = curr_in + (qty_delta if m_type == "IN" else 0.0)
-                new_out = curr_out + (abs(qty_delta) if m_type == "OUT" else 0.0)
+                new_bags = curr_bags + bags_delta
+                new_in_qty = curr_in_qty + (qty_delta if m_type == "IN" else 0.0)
+                new_out_qty = curr_out_qty + (abs(qty_delta) if m_type == "OUT" else 0.0)
+                new_in_bags = curr_in_bags + (bags_delta if m_type == "IN" else 0.0)
+                new_out_bags = curr_out_bags + (abs(bags_delta) if m_type == "OUT" else 0.0)
                 
-                update_range = f"Stock Summary!C{found_idx}:G{found_idx}"
+                update_range = f"Stock Summary!C{found_idx}:J{found_idx}"
+                row_vals = [
+                    new_bal, new_bags, 
+                    curr_row[4] if len(curr_row) > 4 else "PCS", 
+                    new_in_qty, new_out_qty, 
+                    new_in_bags, new_out_bags, 
+                    now
+                ]
                 self.service.spreadsheets().values().update(
                     spreadsheetId=self.spreadsheet_id,
                     range=update_range,
                     valueInputOption="USER_ENTERED",
-                    body={"values": [[new_bal, curr_row[3] if len(curr_row) > 3 else "PCS", new_in, new_out, self._get_now_ist()]]}
+                    body={"values": [row_vals]}
                 ).execute()
         except Exception as e:
             print(f"Update summary row error: {e}")
