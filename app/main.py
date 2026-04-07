@@ -168,17 +168,21 @@ async def create_stock(
         items = payload.get('items', [])
         user_display = user.get('full_name', user['email'])
         
-        # 1. BATCH MERGE: Group items by (Product Code / Batch) to ensure 1 Item per Barcode
+        # 1. BATCH MERGE: Decide identity based on 'merge_mode'
+        merge_on = payload.get('merge_mode', False)
         final_merged = {}
         for item in items:
             p_code = str(item.get('Product Code') or 'UKN').replace(" ", "").upper()
             batch  = str(item.get('Batch Number') or 'NB').replace(" ", "").upper()
-            group_key = f"{p_code}-{batch}"
+            
+            # IDENTITY DEFINITION: Merged means 1 Per Product. Non-merged means 1 Per Batch.
+            group_key = p_code if merge_on else f"{p_code}-{batch}"
             item_id = generate_12_digit_hash(group_key)
             
             if item_id not in final_merged:
                 item['id'] = item_id
                 item['barcode_id'] = item_id
+                item['is_merged'] = merge_on
                 final_merged[item_id] = item
             else:
                 base = final_merged[item_id]
@@ -275,12 +279,15 @@ async def _process_async_ingestion(header: dict, items: list, item_ids: list, us
                     description=item_data.get('Description', '')
                 )
                 
-                # Barcode Archiving (Main Batch ID only)
-                _process_barcode_archiving(item_id, item_data.get('Product Name', 'Stock Item'))
+                # Barcode Archiving (Identity-based naming)
+                p_code = str(item_data.get('Product Code', 'UKN')).replace(" ", "").upper()
+                batch_label = "M" if item_data.get('is_merged') else str(item_data.get('Batch Number', 'NB')).replace(" ", "").upper()
                 
-                # [OMITTED] Generating individual position QR files in Drive is disabled 
-                # as per user request to keep archive batch-focused.
-                # Position IDs remain available for internal scanning/labels.
+                _process_barcode_archiving(
+                    item_id, 
+                    product_code=p_code, 
+                    batch_number=batch_label
+                )
                         
             except Exception as item_err:
                 print(f"⚠️ ITEM SYNC FAILURE [{item_id}]: {item_err}")
@@ -293,10 +300,10 @@ async def _process_async_ingestion(header: dict, items: list, item_ids: list, us
         print(f"🛑 CRITICAL ASYNC INGESTION FAILURE: {e}")
         traceback.print_exc()
 
-def _process_barcode_archiving(code_id: str, label: str, is_position: bool = False, parent_id: str = None):
+def _process_barcode_archiving(code_id: str, product_code: str, batch_number: str, is_position: bool = False, parent_id: str = None):
     """Internal helper to generate/upload QR and update storage in background."""
     try:
-        # 1. DEDUPLICATION CHECK: Do we already have this barcode in the cloud?
+        # 1. DEDUPLICATION CHECK
         existing_link = ""
         if not is_position:
             existing_link = inventory_service.get_existing_barcode(code_id)
@@ -309,15 +316,13 @@ def _process_barcode_archiving(code_id: str, label: str, is_position: bool = Fal
 
         # 2. GENERATE NEW (Only if missing)
         print(f"🆕 [NEW] Generating barcode/QR for {code_id}...")
-        link = drive_service.generate_barcode(code_id, label)
+        link = drive_service.generate_barcode(code_id, product_code, batch_number)
         if link:
             if not is_position:
                 # Main Item ID
                 sheets_service.update_barcode_link(code_id, link)
                 inventory_service.update_barcode_link(code_id, link)
             else:
-                # Individual Distribution ID
-                # We store the link directly in the position record for instant fetch
                 inventory_service.update_distribution_qr(parent_id, code_id, link)
     except Exception as e:
         print(f"Background QR Error [{code_id}]: {e}")
