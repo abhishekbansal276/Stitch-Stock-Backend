@@ -147,6 +147,7 @@ class InventoryService:
         print(f"⚠️ DISPATCH FAILED: Position {dist_id} not found in any index.")
         return {}
 
+    @firestore.transactional
     def check_and_alert_only(self, transaction, doc_ref):
         """Checks if an item is currently in low-stock and triggers alert if first time."""
         print(f"🔍 [ALERT_CHECK] Checking stock levels for {doc_ref.id}")
@@ -183,6 +184,7 @@ class InventoryService:
                 data['unit']
             )
 
+    @firestore.transactional
     def deduct_from_location(self, transaction, doc_ref, loc_id: str, qty: float):
         """Atomic deduction from a specific shelf/zone ID."""
         print(f"📉 [DEDUCTION] Attempting to remove {qty} from location {loc_id} of item {doc_ref.id}")
