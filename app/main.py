@@ -385,8 +385,8 @@ async def remove_stock(
         if not item:
             raise HTTPException(status_code=404, detail="Stock item not found")
             
-        # 1. Atomic Firestore Deduction + Excel Sync (Handled inside service)
-        new_remaining = inventory_service.remove_stock_spatial(stock_item_id, loc_id, qty_to_remove, user=user, bags_removed=bags_removed)
+        # 1. Audit + Alert Check Only (Frontend already deducted in Firestore)
+        new_remaining = inventory_service.remove_stock_spatial(stock_item_id, loc_id, qty_to_remove, user=user, bags_removed=bags_removed, skip_deduction=True)
         
         # 2. Log Activity & Notify Admins
         activity_service.log_and_notify(

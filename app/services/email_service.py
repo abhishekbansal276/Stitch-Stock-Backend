@@ -58,11 +58,11 @@ class EmailService:
         
         # Dynamic Fetch: Get all recipients from Firestore
         try:
-            doc = db.collection('senttoemail').document('recipients').get()
+            doc = db.collection('alert_config').document('low_stock').get()
             if not doc.exists:
-                print("--- ALERT SKIP: senttoemail/recipients doc not found ---")
+                print("--- ALERT SKIP: alert_config/low_stock doc not found ---")
                 return False
-                
+                 
             recipients = doc.to_dict().get('emails', [])
             if not recipients:
                 print("--- ALERT SKIP: No recipients defined in Firestore ---")

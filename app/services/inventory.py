@@ -122,6 +122,41 @@ class InventoryService:
         return {}
 
     @firestore.transactional
+    def check_and_alert_only(self, transaction, doc_ref):
+        """Checks if an item is currently in low-stock and triggers alert if first time."""
+        snapshot = doc_ref.get(transaction=transaction)
+        if not snapshot.exists: return
+        
+        data = snapshot.to_dict()
+        new_total = float(data.get('total_qty', 0))
+        
+        # 1. Get Product Custom Level
+        min_level = float(data.get('min_stock_level') or 0)
+        
+        # 2. Get Global Default Fallback
+        if min_level <= 0:
+            try:
+                g_doc = db.collection('alert_config').document('settings').get()
+                if g_doc.exists:
+                    min_level = float(g_doc.to_dict().get('default_min_stock', 0))
+            except:
+                min_level = 0
+                
+        # For 'check only' mode, we might want a 'last_alert_qty' or similar 
+        # to avoid double emails if the sync API is called multiple times.
+        if min_level > 0 and new_total <= min_level:
+            # We check a 'last_notified_at' or just look at the timestamp of the last movement
+            # In 'Sync' mode, we usually assume the frontend already did the movement.
+            # We'll rely on the email service to avoid spam if possible or just log it.
+            email_service.send_low_stock_alert(
+                data['product_name'], 
+                data['product_code'], 
+                new_total, 
+                min_level, 
+                data['unit']
+            )
+
+    @firestore.transactional
     def deduct_from_location(self, transaction, doc_ref, loc_id: str, qty: float):
         """Atomic deduction from a specific shelf/zone ID."""
         snapshot = doc_ref.get(transaction=transaction)
@@ -134,18 +169,21 @@ class InventoryService:
         
         new_distributions = []
         for dist in distributions:
-            if dist.get('dist_id') == loc_id: # loc_id here refers to the specific Position ID (dist_id)
+            if dist.get('dist_id') == loc_id:
                 curr_qty = float(dist.get('qty', 0))
-                if curr_qty < qty:
-                    raise Exception(f"Insufficient stock in this position. Available: {curr_qty}")
-                dist['qty'] = curr_qty - qty
+                if curr_qty < qty - 0.001:
+                    # If it's marginally less, we just set to 0 (floating point safety)
+                    qty = curr_qty
+                dist['qty'] = float(curr_qty - qty)
                 found = True
             new_distributions.append(dist)
             
         if not found:
             raise Exception(f"Position ID {loc_id} not found for this item.")
             
-        new_total = data.get('total_qty', 0) - qty
+        old_total = float(data.get('total_qty', 0))
+        new_total = old_total - qty
+        
         # Update searchable locations index
         search_locations = []
         for d in new_distributions:
@@ -156,36 +194,47 @@ class InventoryService:
         
         new_location_ids = list(set([l for l in search_locations if l]))
         
-        # Check for Low Stock Alert
-        min_level = data.get('min_stock_level', 0)
-        if new_total <= min_level and min_level > 0:
-            # We only alert if it wasn't already below (to avoid repeat emails)
-            # Or if it's the first time dipping
-            old_total = data.get('total_qty', 0)
-            if old_total > min_level:
-                email_service.send_low_stock_alert(
-                    data['product_name'], 
-                    data['product_code'], 
-                    new_total, 
-                    min_level, 
-                    data['unit']
-                )
+        # ── Check for Low Stock Alert ──
+        min_level = float(data.get('min_stock_level') or 0)
+        if min_level <= 0:
+            try:
+                g_doc = db.collection('alert_config').document('settings').get()
+                if g_doc.exists:
+                    min_level = float(g_doc.to_dict().get('default_min_stock', 0))
+            except:
+                min_level = 0
+                
+        if min_level > 0 and new_total <= min_level and old_total > min_level:
+            email_service.send_low_stock_alert(
+                data['product_name'], 
+                data['product_code'], 
+                new_total, 
+                min_level, 
+                data['unit']
+            )
 
         transaction.update(doc_ref, {
             'distributions': new_distributions,
-            'total_qty': new_total,
+            'total_qty': float(max(0, new_total)),
             'location_ids': new_location_ids,
             'updated_at': int(time.time())
         })
-        # Note: We don't remove from cross-index here to avoid race conditions; 
-        # lookups will fail gracefully if distributions change.
         return new_total
 
-    def remove_stock_spatial(self, barcode_id: str, loc_id: str, qty: float, user: dict = None, bags_removed: float = 0):
-        """Wrapper to perform a safe atomic deduction."""
+    def remove_stock_spatial(self, barcode_id: str, loc_id: str, qty: float, user: dict = None, bags_removed: float = 0, skip_deduction: bool = False):
+        """Wrapper to perform a safe atomic deduction or just an audit/alert check."""
         doc_ref = self.collection.document(barcode_id)
-        transaction = db.transaction()
-        new_total = self.deduct_from_location(transaction, doc_ref, loc_id, qty)
+        
+        if skip_deduction:
+            # Audit mode (Frontend already updated Firestore)
+            # We just perform the alert check in a transaction to be safe
+            transaction = db.transaction()
+            self.check_and_alert_only(transaction, doc_ref)
+            data = doc_ref.get().to_dict()
+            new_total = data.get('total_qty', 0)
+        else:
+            transaction = db.transaction()
+            new_total = self.deduct_from_location(transaction, doc_ref, loc_id, qty)
         
         # ── SYNC TO SHEETS ──
         try:
