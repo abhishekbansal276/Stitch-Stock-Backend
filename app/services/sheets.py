@@ -718,7 +718,7 @@ class SheetsService:
                                 "horizontalAlignment": "RIGHT",
                                 "numberFormat": {
                                     "type": "NUMBER",
-                                    "pattern": "#,##0.##",
+                                    "pattern": "#,##0.###",
                                 },
                             }
                         },
@@ -991,10 +991,10 @@ class SheetsService:
                         
                         row_data[h["Product Name"]] = name
                         row_data[h["Product Code"]] = code
-                        row_data[h["Quantity Received"]] = qty
+                        row_data[h["Quantity Received"]] = self._clean_num(qty)
                         row_data[h["Unit"]] = unit
                         row_data[h["Batch Number"]] = str(item.get("Batch Number", "")).strip()
-                        row_data[h["Number of Bags"]] = bags
+                        row_data[h["Number of Bags"]] = self._clean_num(bags)
                         row_data[h["Storage Type"]] = item.get("storage_type") or "UNIT"
                         row_data[h["Barcode ID"]] = item_id
                         row_data[h["Created At"]] = int(now.timestamp())
