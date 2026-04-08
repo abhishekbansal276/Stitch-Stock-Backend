@@ -164,7 +164,7 @@ class SheetsService:
             self._ensure_sheet("Stock Summary",   self.SUMMARY_SCHEMA,   existing)
 
             self._cached_header_map = {n: i for i, n in enumerate(self.BASE_SCHEMA)}
-            self._cache_expiry = time.time() + 300
+            self._cache_expiry = time.time() + 3600 # 1 Hour Cache
             return self._cached_header_map
         except Exception as e:
             print(f"CRITICAL: Header init error: {e}")
@@ -185,7 +185,9 @@ class SheetsService:
                 if title == "Stock Summary":
                     self._add_chart(sheet_id)
             else:
-                check_range = f"{title}!2:2" if title == "Stock Register" else f"{title}!1:1"
+                # ALL main sheets (Register, Movements, Summary) have SUPER HEADERS in Row 1.
+                # The actual schema (headers) is in Row 2.
+                check_range = f"{title}!2:2" 
                 result = self.service.spreadsheets().values().get(
                     spreadsheetId=self.spreadsheet_id, range=check_range
                 ).execute()
@@ -1386,12 +1388,12 @@ class SheetsService:
                 curr_in_bags = self._to_float(curr_row[7]) if len(curr_row) > 7 else 0.0
                 curr_out_bags = self._to_float(curr_row[8]) if len(curr_row) > 8 else 0.0
                 
-                new_bal = curr_bal + qty_delta
-                new_bags = curr_bags + bags_delta
-                new_in_qty = curr_in_qty + (max(0, qty_delta) if m_type == "IN" else 0.0)
-                new_out_qty = curr_out_qty + (abs(min(0, qty_delta)) if m_type == "OUT" else 0.0)
-                new_in_bags = curr_in_bags + (max(0, bags_delta) if m_type == "IN" else 0.0)
-                new_out_bags = curr_out_bags + (abs(min(0, bags_delta)) if m_type == "OUT" else 0.0)
+                new_bal = round(curr_bal + qty_delta, 3)
+                new_bags = int(curr_bags + bags_delta)
+                new_in_qty = round(curr_in_qty + (max(0, qty_delta) if m_type == "IN" else 0.0), 3)
+                new_out_qty = round(curr_out_qty + (abs(min(0, qty_delta)) if m_type == "OUT" else 0.0), 3)
+                new_in_bags = int(curr_in_bags + (max(0, bags_delta) if m_type == "IN" else 0.0))
+                new_out_bags = int(curr_out_bags + (abs(min(0, bags_delta)) if m_type == "OUT" else 0.0))
                 
                 update_range = f"Stock Summary!C{found_idx}:J{found_idx}"
                 row_vals = [
@@ -1456,10 +1458,10 @@ class SheetsService:
     def _clean_num(self, val: float) -> any:
         """Removes trailing .0 but keeps other decimals for professional Sheets look."""
         if val is None: return 0
-        v = float(val)
+        v = round(float(val), 3)
         if v == int(v):
             return int(v)
-        return round(v, 3)
+        return v
 
 
     def refresh_styles(self, title: str):
