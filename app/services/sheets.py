@@ -1430,10 +1430,8 @@ class SheetsService:
                 h = {n: i for i, n in enumerate(self.BASE_SCHEMA)}
                 b_id_idx = h.get("Barcode ID", 20)
                 row_idx = self._find_row_by_col(b_id_idx, barcode_id)
-                
                 if row_idx == -1:
-                    print(f"⚠️ Sheets Deduction: Barcode ID {barcode_id} not found in Register.")
-                    return
+                    raise ValueError(f"Barcode ID {barcode_id} not found in Stock Register. Please run the Admin Janitor to reconcile.")
 
                 # 1. Update Stock Register Row
                 qty_col = self._get_col_letter(h.get("Quantity Received", 7))

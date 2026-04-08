@@ -193,6 +193,17 @@ class InventoryService:
             'last_sync_attempt': int(time.time())
         })
 
+    def queue_pending_sync(self, sync_type: str, payload: Dict):
+        """Adds a task to the persistent retry queue."""
+        db.collection('pending_syncs').add({
+            'type': sync_type,
+            'payload': payload,
+            'sync_status': 'pending',
+            'retry_count': 0,
+            'created_at': int(time.time()),
+            'last_error': None
+        })
+
     def get_pending_syncs(self, limit: int = 50) -> List[Dict]:
         """Find any documents that have not been successfully synced to Google Sheets."""
         query = self.collection.where(filter=FieldFilter('sync_status', '!=', 'success')).limit(limit)
@@ -409,7 +420,7 @@ class InventoryService:
             # We must pass the transaction object to the internal logic
             new_total = self.deduct_from_location(transaction, doc_ref, loc_id, qty, bags_removed=bags_removed)
         
-        # ── SYNC TO SHEETS ──
+        # ── RELIABLE HYBRID SYNC ──
         try:
             from app.services.sheets import sheets_service
             # Fetch doc again to get warehouse/location for movement record
@@ -417,18 +428,34 @@ class InventoryService:
             dist = next((d for d in data.get('distributions', []) if d.get('dist_id') == loc_id), {})
             user_display = user.get('full_name', user['email']) if user else "System"
             
-            sheets_service.record_dispatch(
-                barcode_id=data.get('barcode_id', doc_id), # Consolidate to primary barcode
-                qty=qty,
-                bags_removed=bags_removed,
-                warehouse=dist.get('warehouse', 'Main Floor'),
-                location=dist.get('location', 'General'),
-                user_display=user_display,
-                dist_id=loc_id,
-                warehouse_id=dist.get('warehouse_id', 'default')
-            )
+            # Prepare payload for potential retry
+            sync_payload = {
+                "barcode_id": data.get('barcode_id', doc_id),
+                "qty": qty,
+                "bags_removed": bags_removed,
+                "warehouse": dist.get('warehouse', 'Main Floor'),
+                "location": dist.get('location', 'General'),
+                "user_display": user_display,
+                "dist_id": loc_id,
+                "warehouse_id": dist.get('warehouse_id', 'default')
+            }
+
+            try:
+                sheets_service.record_dispatch(**sync_payload)
+            except ValueError as ve:
+                # Logic Error (e.g. Product NOT found in Sheets) - RE-RAISE for immediate user feedback
+                print(f"🛑 [SYNC_LOGIC_ERROR] Permanent failure: {ve}")
+                raise ve
+            except Exception as te:
+                # Technical Error (e.g. Network Timeout) - QUEUE for Background Reaper
+                print(f"📡 [SYNC_TECH_ERROR] Backgrounding deduction due to network: {te}")
+                self.queue_pending_sync("DISPATCH", sync_payload)
+                # We return the new total but the API should ideally return a 202
+                
+        except ValueError:
+            raise # Pass-through logic errors
         except Exception as e:
-            print(f"⚠️ Sheets Sync Failed (Dispatch): {e}")
+            print(f"⚠️ Unexpected Sync Handler Error: {e}")
             
         return new_total
 
@@ -524,18 +551,34 @@ class InventoryService:
         dest_found = False
         new_distributions = []
         
-        # 1. Deduct from source
+        # 1. Calculate proportional bags to move if source has bag metadata
+        source_dist = next((d for d in distributions if d.get('dist_id') == from_dist_id), None)
+        bags_to_move = 0
+        if source_dist:
+            s_qty = float(source_dist.get('qty', 0))
+            s_bags = float(source_dist.get('bags', 0))
+            if s_qty > 0 and s_bags > 0:
+                # Estimate bags based on proportion of qty being moved
+                bags_to_move = int(round((qty / s_qty) * s_bags))
+                # Safety: can't move more bags than exist
+                bags_to_move = min(bags_to_move, int(s_bags))
+        
+        # 2. Execute movement within distributions
         for dist in distributions:
             if dist.get('dist_id') == from_dist_id:
                 curr_qty = float(dist.get('qty', 0))
-                if curr_qty < qty:
-                    raise Exception(f"Insufficient stock in source position.")
+                curr_bags = float(dist.get('bags', 0))
+                if curr_qty < qty - 0.001:
+                    raise Exception(f"Insufficient stock in source position (Has {curr_qty}, Needs {qty}).")
+                
                 dist['qty'] = curr_qty - qty
+                dist['bags'] = max(0, int(curr_bags) - bags_to_move)
                 source_found = True
             
             # Check if destination exists (Warehouse matches AND Location matches)
             if dist.get('warehouse') == to_warehouse and dist.get('location') == to_location:
                 dist['qty'] = float(dist.get('qty', 0)) + qty
+                dist['bags'] = int(dist.get('bags', 0)) + bags_to_move
                 dest_found = True
             
             new_distributions.append(dist)
@@ -544,30 +587,29 @@ class InventoryService:
             raise Exception(f"Source Position ID {from_dist_id} not found.")
 
         if not dest_found:
-            # Create new distribution ID for the new location
-            new_dist_id = f"POS-{str(uuid.uuid4())[:8].upper()}"
+            # Create new distribution ID using standard 12-digit hash for consistency
+            seed = f"TRANS-{from_dist_id}-{to_warehouse}-{to_location}-{int(time.time())}"
+            new_dist_id = generate_12_digit_hash(seed)
             new_distributions.append({
                 'warehouse': to_warehouse, 
                 'location': to_location, 
                 'qty': qty, 
-                'dist_id': new_dist_id
+                'bags': bags_to_move,
+                'dist_id': new_dist_id,
+                'batch_number': source_dist.get('batch_number', 'NB') if source_dist else 'NB'
             })
 
-        cleaned_distributions = [d for d in new_distributions if float(d.get('qty', 0)) > 0]
+        cleaned_distributions = [d for d in new_distributions if float(d.get('qty', 0)) > 0.001]
         
-        # Recalculate location search index
+        # 3. Recalculate location search index (Single Clean Pass)
         search_locations = []
         for d in cleaned_distributions:
-            search_locations.append(d.get('warehouse'))
-            search_locations.append(d.get('dist_id'))
-            search_locations.append(f"{d.get('warehouse')} - {d.get('location')}")
-        
-        search_locations = []
-        for d in distributions:
             wh = d.get('warehouse')
             zn = d.get('location')
+            di = d.get('dist_id')
             if wh: search_locations.append(wh)
             if zn: search_locations.append(zn)
+            if di: search_locations.append(di)
             if wh and zn: search_locations.append(f"{wh} - {zn}")
             
         new_location_ids = list(set([l for l in search_locations if l]))

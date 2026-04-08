@@ -43,15 +43,25 @@ async def _automated_sync_reaper():
     
     while True:
         try:
-            # Query Firestore (Limit to 50 items per pass to save resources)
+            # 1. POSITIONS SYNC (Legacy / Intake)
             docs = db.collection("inventory_positions")\
                      .where(filter=FieldFilter("sync_status", "in", ["pending", "error"]))\
-                     .limit(50).get()
+                     .limit(20).get()
             
             if docs:
-                print(f"📊 SYNC REAPER: Identifying {len(docs)} items requiring attention...")
+                print(f"📊 SYNC REAPER [POSITIONS]: Processing {len(docs)} items...")
                 for doc in docs:
                     await _process_single_sync(doc.id, doc.to_dict())
+            
+            # 2. PENDING TASKS SYNC (Deductions / Transfers)
+            tasks = db.collection("pending_syncs")\
+                      .where(filter=FieldFilter("sync_status", "==", "pending"))\
+                      .limit(20).get()
+            
+            if tasks:
+                print(f"📊 SYNC REAPER [TASKS]: Processing {len(tasks)} operations...")
+                for task in tasks:
+                    await _process_pending_sync_task(task.id, task.to_dict())
             
         except Exception as e:
             print(f"❌ SYNC REAPER ERROR: {e}")
@@ -92,6 +102,64 @@ async def _process_single_sync(doc_id: str, data: Dict):
             
     except Exception as e:
         print(f"❌ SYNC REAPER: Crash processing {doc_id}: {e}")
+
+async def _process_pending_sync_task(task_id: str, data: Dict):
+    """Processes a polymorphic sync task (DISPATCH, etc.) from pending_syncs."""
+    try:
+        t_type = data.get("type")
+        payload = data.get("payload", {})
+        retry_count = data.get("retry_count", 0)
+
+        success = False
+        if t_type == "DISPATCH":
+            success = sheets_service.record_dispatch(**payload)
+        elif t_type == "INGESTION_BATCH":
+            # For batches, we use the original logic but wrapped for task processor
+            try:
+                # payload = {header, items, item_ids, user_display}
+                await asyncio.to_thread(
+                    sheets_service.save_stock_batch, 
+                    payload['header'], 
+                    payload['items'], 
+                    payload['item_ids'], 
+                    payload['user_display']
+                )
+                success = True
+            except Exception as e:
+                print(f"⚠️ Reaper Batch Retry Failed: {e}")
+                success = False
+        elif t_type == "TRANSFER":
+            try:
+                sheets_service.add_movement(**payload)
+                success = True
+            except Exception as e:
+                print(f"⚠️ Reaper Transfer Retry Failed: {e}")
+                success = False
+        
+        if success:
+            db.collection("pending_syncs").document(task_id).delete()
+            print(f"✅ SYNC REAPER: Task {task_id} [{t_type}] completed and archived.")
+        else:
+            new_retry = retry_count + 1
+            update_data = {
+                "retry_count": new_retry,
+                "last_sync_attempt": int(time.time())
+            }
+            if new_retry >= 5:
+                # Permanent failure alert
+                update_data["sync_status"] = "failed"
+                from app.services.fcm_service import fcm_service
+                fcm_service.send_multicast_to_admins(
+                    title="🚨 SYNC FAILURE",
+                    body=f"A background {t_type} operation failed after 5 retries. Manual intervention required.",
+                    data={"task_id": task_id, "type": t_type}
+                )
+            
+            db.collection("pending_syncs").document(task_id).update(update_data)
+            print(f"⚠️ SYNC REAPER: Task {task_id} failed attempt {new_retry}.")
+            
+    except Exception as e:
+        print(f"❌ SYNC REAPER [TASK_ERROR] {task_id}: {e}")
 
 @app.on_event("startup")
 async def startup_event():
@@ -323,6 +391,14 @@ async def _process_async_ingestion(header: dict, items: list, item_ids: list, us
             for d_id in doc_ids_to_sync:
                 try: inventory_service.mark_as_sync_error(d_id, str(sheet_err))
                 except: pass
+            
+            # Queue as a global task for extra persistence
+            inventory_service.queue_pending_sync("INGESTION_BATCH", {
+                "header": header,
+                "items": items,
+                "item_ids": item_ids,
+                "user_display": user_display
+            })
 
         # 4. Final Logging and Notification
         invoice_num = header.get('Invoice Number', 'INV-N/A')
@@ -440,6 +516,10 @@ async def remove_stock(
         
         print(f"✅ [REMOVE_SUCCESS] ID: {stock_item_id} | New Total: {new_remaining}")
         return {"message": "Stock removed successfully", "remaining": new_remaining}
+    except ValueError as ve:
+        # LOGIC ERROR: Immediate feedback (e.g. "Product not found in Sheets")
+        print(f"🛑 [REMOVE_LOGIC_ERROR] {ve}")
+        raise HTTPException(status_code=400, detail=str(ve))
     except Exception as e:
         import traceback
         print(f"🛑 [REMOVE_ERROR] Fatal error during deduction for {stock_item_id}:")
@@ -569,17 +649,25 @@ async def transfer_stock_position(req: StockTransferRequest, user: dict = Depend
             req.barcode_id, req.from_location, req.to_location, req.to_location_name, req.quantity
         )
         
-        # 2. Log to Google Sheets Movements (Audit)
-        # Format: "Zone A -> Zone B" for spatial traceability
+        # 2. RELIABLE HYBRID SYNC: Google Sheets Movement
         loc_audit = f"{req.from_location_name} ➔ {req.to_location_name}"
-        sheets_service.add_movement(
-            req.barcode_id, 
-            req.reason or "WMS-TRANSFER", 
-            "TRANSFER", 
-            req.quantity, 
-            user_display,
-            location=loc_audit
-        )
+        sync_payload = {
+            "barcode_id": req.barcode_id,
+            "reason": req.reason or "WMS-TRANSFER",
+            "type": "TRANSFER",
+            "qty": req.quantity,
+            "user_display": user_display,
+            "location": loc_audit
+        }
+
+        try:
+            # Attempt synchronous sync
+            sheets_service.add_movement(**sync_payload)
+        except Exception as e:
+            # Technical failure: Queue for background retry
+            print(f"📡 [TRANSFER_SYNC_TECH_ERROR] Queueing transfer for background: {e}")
+            inventory_service.queue_pending_sync("TRANSFER", sync_payload)
+            # Response remains success as Firestore is already updated
         
         # 3. Log Activity & Notify Admins
         activity_service.log_and_notify(
