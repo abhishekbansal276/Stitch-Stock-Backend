@@ -1305,7 +1305,7 @@ class SheetsService:
                     body={"valueInputOption": "USER_ENTERED", "data": [
                         {"range": f"Stock Register!{qty_col}{row_idx}", "values": [[self._clean_num(new_qty)]]},
                         {"range": f"Stock Register!{bags_col}{row_idx}", "values": [[self._clean_num(new_bags)]]},
-                        {"range": f"Stock Register!{updated_at_col}{row_idx}:{updated_by_col}{row_idx}", "values": [[self._get_now_ist(), user_display]]}
+                        {"range": f"Stock Register!{updated_at_col}{row_idx}:{updated_by_col}{row_idx}", "values": [[self._get_now_ist().strftime("%Y-%m-%d %H:%M:%S"), user_display]]}
                     ]}
                 ).execute()
 
@@ -1317,7 +1317,7 @@ class SheetsService:
                 p_name = name_res.get("values", [["Unknown"]])[0][0]
                 
                 movement_row = [
-                    self._get_now_ist(), p_name, "OUT", 
+                    self._get_now_ist().strftime("%Y-%m-%d %H:%M:%S"), p_name, "OUT", 
                     self._clean_num(qty), self._clean_num(bags_removed), 
                     warehouse, location, user_display,
                     f"MOV-{int(time.time())}", barcode_id, f"DISP-{uuid.uuid4().hex[:4].upper()}", dist_id, warehouse_id
@@ -1374,7 +1374,7 @@ class SheetsService:
                     name, code, qty_delta, bags_delta, "PCS", 
                     qty_delta, 0.0,  # Total Qty Rec, Total Qty Disp
                     bags_delta, 0.0, # Total Bags Rec, Total Bags Disp
-                    now
+                    now.strftime("%Y-%m-%d %H:%M:%S")
                 ]
                 self._append_row("Stock Summary", new_row)
             else:
@@ -1410,11 +1410,10 @@ class SheetsService:
         except Exception as e:
             print(f"Update summary row error: {e}")
 
-    def _get_now_ist(self) -> str:
-        """Returns current time in Indian Standard Time (UTC+5:30)."""
+    def _get_now_ist(self) -> datetime:
+        """Returns current time in Indian Standard Time (UTC+5:30) as a datetime object."""
         # Manual offset for IST (5 hours 30 mins = 19800 seconds)
-        ist_now = datetime.utcnow() + timedelta(hours=5, minutes=30)
-        return ist_now.strftime("%Y-%m-%d %H:%M:%S")
+        return datetime.utcnow() + timedelta(hours=5, minutes=30)
 
     # ── LOW-LEVEL HELPERS ─────────────────────────────────────────────────────
 
