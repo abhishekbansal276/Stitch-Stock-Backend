@@ -1072,15 +1072,22 @@ class SheetsService:
                     row_idx = existing_reg_barcode.get(item_id)
                     
                     if row_idx:
-                        # Update Existing Row in Spreadsheet
-                        qty_idx = self.header_map.get("Quantity Received", 2)
-                        old_reg_qty = 0.0
+                        qty_idx  = self.header_map.get("Quantity Received", 7)
+                        bags_idx = self.header_map.get("Number of Bags", 9)
+                        old_reg_qty  = 0.0
+                        old_reg_bags = 0
                         if row_idx <= len(reg_rows):
-                            old_reg_qty = self._to_float(reg_rows[row_idx-1][qty_idx]) if len(reg_rows[row_idx-1]) > qty_idx else 0.0
+                            reg_row = reg_rows[row_idx-1]
+                            old_reg_qty  = self._to_float(reg_row[qty_idx])  if len(reg_row) > qty_idx  else 0.0
+                            old_reg_bags = int(self._to_float(reg_row[bags_idx])) if len(reg_row) > bags_idx else 0
                         
                         updates_batch.append({
                             "range": f"Stock Register!{self._get_col_letter(qty_idx)}{row_idx}",
                             "values": [[self._clean_num(old_reg_qty + qty)]]
+                        })
+                        updates_batch.append({
+                            "range": f"Stock Register!{self._get_col_letter(bags_idx)}{row_idx}",
+                            "values": [[int(round(old_reg_bags + bags))]]
                         })
                         updates_at_idx = self.header_map.get("Updated At", 23)
                         updates_by_idx = self.header_map.get("Updated By", 24)
@@ -1211,9 +1218,9 @@ class SheetsService:
                         updates_batch.append({
                             "range": f"Stock Summary!C{s_entry['row']}:J{s_entry['row']}",
                             "values": [[
-                                self._clean_num(s_entry["balance"]), self._clean_num(s_entry["bags_balance"]), unit, 
-                                self._clean_num(s_entry["received"]), self._clean_num(s_entry["dispatched"]), 
-                                self._clean_num(s_entry["bags_received"]), self._clean_num(s_entry["bags_dispatched"]), 
+                                self._clean_num(s_entry["balance"]), int(round(s_entry["bags_balance"])), unit,
+                                self._clean_num(s_entry["received"]), self._clean_num(s_entry["dispatched"]),
+                                int(round(s_entry["bags_received"])), int(round(s_entry["bags_dispatched"])),
                                 now.strftime("%Y-%m-%d %H:%M:%S")
                             ]]
                         })
@@ -1536,8 +1543,8 @@ class SheetsService:
                 curr_in_bags = self._to_float(curr_row[7]) if len(curr_row) > 7 else 0.0
                 curr_out_bags = self._to_float(curr_row[8]) if len(curr_row) > 8 else 0.0
                 
-                new_bal = round(curr_bal + qty_delta, 3)
-                new_bags = int(curr_bags + bags_delta)
+                new_bal  = max(0.0, round(curr_bal + qty_delta, 3))
+                new_bags = max(0, int(round(curr_bags + bags_delta)))
                 new_in_qty = round(curr_in_qty + (max(0, qty_delta) if m_type == "IN" else 0.0), 3)
                 new_out_qty = round(curr_out_qty + (abs(min(0, qty_delta)) if m_type == "OUT" else 0.0), 3)
                 new_in_bags = int(curr_in_bags + (max(0, bags_delta) if m_type == "IN" else 0.0))
