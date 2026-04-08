@@ -698,13 +698,44 @@ class SheetsService:
         })
 
         # ── 11. NUMERIC COLUMNS — right-aligned ───────────────────────────────
-        numeric_cols = {
-            "Stock Register":  [7, 9, 11, 12, 13, 14, 15, 16],
+        # Differentiate between Quantity (forced decimal) and others (clean integers)
+        qty_cols = {
+            "Stock Register":  [7],
             "Stock Movements": [3],
-            "Stock Summary":   [2, 3, 5, 6, 7, 8],
+            "Stock Summary":   [2, 5, 6],
         }.get(title, [])
 
-        for col in numeric_cols:
+        other_numeric_cols = {
+            "Stock Register":  [9, 11, 12, 13, 14, 15, 16],
+            "Stock Movements": [4],
+            "Stock Summary":   [3, 7, 8],
+        }.get(title, [])
+
+        # QUANTITY FORMAT: Forced at least one decimal (e.g. 2.0)
+        for col in qty_cols:
+            if col < num_cols:
+                requests.append({
+                    "repeatCell": {
+                        "range": {
+                            "sheetId": sheet_id,
+                            "startRowIndex": frozen_rows,
+                            "startColumnIndex": col, "endColumnIndex": col + 1,
+                        },
+                        "cell": {
+                            "userEnteredFormat": {
+                                "horizontalAlignment": "RIGHT",
+                                "numberFormat": {
+                                    "type": "NUMBER",
+                                    "pattern": "#,##0.0#",
+                                },
+                            }
+                        },
+                        "fields": "userEnteredFormat(horizontalAlignment,numberFormat)",
+                    }
+                })
+
+        # GENERAL NUMERIC: Clean integers for bags/financials
+        for col in other_numeric_cols:
             if col < num_cols:
                 requests.append({
                     "repeatCell": {
