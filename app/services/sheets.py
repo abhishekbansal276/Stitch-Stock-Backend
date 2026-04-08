@@ -733,7 +733,7 @@ class SheetsService:
                 requests.append({
                     "repeatCell": {
                         "range": {"sheetId": sheet_id, "startRowIndex": frozen_rows, "startColumnIndex": col, "endColumnIndex": col+1},
-                        "cell": {"userEnteredFormat": {"horizontalAlignment": "RIGHT", "numberFormat": {"type": "NUMBER", "pattern": "#,##0.0#"}}},
+                        "cell": {"userEnteredFormat": {"horizontalAlignment": "RIGHT", "numberFormat": {"type": "NUMBER", "pattern": "#,##0.0000"}}},
                         "fields": "userEnteredFormat(horizontalAlignment,numberFormat)",
                     }
                 })
@@ -1541,10 +1541,10 @@ class SheetsService:
                 curr_in_bags = self._to_float(curr_row[7]) if len(curr_row) > 7 else 0.0
                 curr_out_bags = self._to_float(curr_row[8]) if len(curr_row) > 8 else 0.0
                 
-                new_bal  = max(0.0, round(curr_bal + qty_delta, 3))
+                new_bal  = max(0.0, round(curr_bal + qty_delta, 4))
                 new_bags = max(0, int(round(curr_bags + bags_delta)))
-                new_in_qty = round(curr_in_qty + (max(0, qty_delta) if m_type == "IN" else 0.0), 3)
-                new_out_qty = round(curr_out_qty + (abs(min(0, qty_delta)) if m_type == "OUT" else 0.0), 3)
+                new_in_qty = round(curr_in_qty + (max(0, qty_delta) if m_type == "IN" else 0.0), 4)
+                new_out_qty = round(curr_out_qty + (abs(min(0, qty_delta)) if m_type == "OUT" else 0.0), 4)
                 new_in_bags = int(curr_in_bags + (max(0, bags_delta) if m_type == "IN" else 0.0))
                 new_out_bags = int(curr_out_bags + (abs(min(0, bags_delta)) if m_type == "OUT" else 0.0))
                 
