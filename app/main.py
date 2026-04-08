@@ -463,8 +463,9 @@ async def get_stock_item(
     """
     Fetch details + Spatial Positions (from Firestore).
     """
-    # 1. Try to find Position in Firestore first (to resolve doc_id -> barcode_id)
-    pos = inventory_service.get_position(stock_item_id)
+    # 1. Use robust discovery to find Position in Firestore (resolves barcode -> BATCH doc)
+    result = inventory_service.find_by_dist_id(stock_item_id)
+    pos = result.get('item')
     search_id = pos.get('barcode_id', stock_item_id) if pos else stock_item_id
 
     # 2. Get master details from Sheets

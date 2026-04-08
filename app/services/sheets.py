@@ -1342,7 +1342,7 @@ class SheetsService:
             return {}
         try:
             h = {n: i for i, n in enumerate(self.BASE_SCHEMA)}
-            b_id_idx = h.get("Barcode ID", 19)
+            b_id_idx = h.get("Barcode ID", 20)
             max_col  = self._get_col_letter(len(self.BASE_SCHEMA) - 1)
             
             result = self.service.spreadsheets().values().get(
