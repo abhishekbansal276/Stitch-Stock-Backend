@@ -498,6 +498,19 @@ async def get_stock_item(
         # Merge missing metadata from Firestore Source of Truth
         if not item.get('supplier_name'):
             item['supplier_name'] = pos.get('supplier_name')
+            
+        # 🚨 DEEP SEARCH: If still N/A and it's a merged doc, look for ANY batch with this supplier
+        if (not item.get('supplier_name') or item.get('supplier_name') == 'N/A') and pos.get('is_merged'):
+            try:
+                p_code = pos.get('product_code')
+                if p_code:
+                    batches = inventory_service.collection.where(filter=FieldFilter('product_code', '==', p_code))\
+                                                           .where(filter=FieldFilter('is_merged', '==', False))\
+                                                           .limit(1).get()
+                    if batches:
+                        item['supplier_name'] = batches[0].to_dict().get('supplier_name')
+            except: pass
+
         if not item.get('batch_number'):
             item['batch_number'] = pos.get('batch_number')
         

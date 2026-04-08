@@ -317,17 +317,25 @@ class InventoryService:
                 data = doc.to_dict()
                 return {"item": data, "target_distribution": data.get('distributions', [None])[0]}
             
-        # ── TIER 4: PRODUCT CODE LOOKUP (Broadest Match) ──
-        # Useful for manufacturer barcodes or typed product codes
-        query = self.collection.where(filter=FieldFilter('product_code', '==', dist_id)).limit(1).get()
-        if not query and clean_id != dist_id:
-            query = self.collection.where(filter=FieldFilter('product_code', '==', clean_id)).limit(1).get()
-            
-        if query:
-            data = query[0].to_dict()
-            # Default to first distribution
-            target_dist = data.get('distributions', [None])[0]
-            return {"item": data, "target_distribution": target_dist}
+        # ── TIER 4: PRODUCT CODE LOOKUP (Batch-First Priority) ──
+        # Prioritize discrete batches (is_merged=False) over global summaries
+        for q_id in [dist_id, clean_id]:
+            # 1. Try to find a real discrete batch first
+            batch_query = self.collection.where(filter=FieldFilter('product_code', '==', q_id))\
+                                         .where(filter=FieldFilter('is_merged', '==', False))\
+                                         .limit(1).get()
+            if batch_query:
+                data = batch_query[0].to_dict()
+                target_dist = data.get('distributions', [None])[0]
+                return {"item": data, "target_distribution": target_dist}
+
+            # 2. Fallback to any matching doc (including PROD- summaries)
+            summary_query = self.collection.where(filter=FieldFilter('product_code', '==', q_id))\
+                                           .limit(1).get()
+            if summary_query:
+                data = summary_query[0].to_dict()
+                target_dist = data.get('distributions', [None])[0]
+                return {"item": data, "target_distribution": target_dist}
             
         print(f"⚠️ DISPATCH FAILED: Position {dist_id} (Clean: {clean_id}) not found in any index.")
         return {}
