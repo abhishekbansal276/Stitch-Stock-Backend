@@ -495,6 +495,12 @@ async def get_stock_item(
         item['doc_id'] = pos.get('doc_id')
         item['barcode_ids'] = pos.get('barcode_ids', [])
         
+        # Merge missing metadata from Firestore Source of Truth
+        if not item.get('supplier_name'):
+            item['supplier_name'] = pos.get('supplier_name')
+        if not item.get('batch_number'):
+            item['batch_number'] = pos.get('batch_number')
+        
     return item
 
 @app.post("/stock/{stock_item_id}/remove")
