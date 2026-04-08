@@ -172,7 +172,7 @@ class InventoryService:
             'distributions': merged_dists,
             'location_ids': list(set([l for l in search_locations if l])),
             'min_stock_level': existing_data.get('min_stock_level', 0),
-            'supplier_name': supplier_name or existing_data.get('supplier_name'),
+            'supplier_name': supplier_name or existing_data.get('supplier_name') or 'N/A',
             'batch_number': 'AGGREGATED' if is_merged else (batch_number or existing_data.get('batch_number')),
             'storage_type': storage_type,
             'number_of_bags': total_bags,
