@@ -1,6 +1,24 @@
 import hashlib
 import re
 
+def normalize_id(val) -> str:
+    """
+    Cleans an ID (product code, batch, etc.) to a standardized alphanumeric format.
+    Specifically handles Google Sheets' tendency to add .0 to numeric strings.
+    """
+    if val is None:
+        return ""
+    
+    # 1. Standardize string type and case
+    s = str(val).strip().upper()
+    
+    # 2. Handle trailing .0 (common spreadsheet artifact)
+    if s.endswith('.0'):
+        s = s[:-2]
+    
+    # 3. Final alphanumeric pass
+    return re.sub(r'[^A-Z0-9]', '', s)
+
 def generate_12_digit_hash(seed: str) -> str:
     """
     Generates a deterministic 12-digit numeric string from a given seed string.
@@ -9,8 +27,8 @@ def generate_12_digit_hash(seed: str) -> str:
     if not seed:
         return "000000000000"
         
-    # Standardize seed: uppercase and alphanumeric only
-    clean_seed = re.sub(r'[^A-Z0-9]', '', str(seed).upper())
+    # Standardize seed using the same logic as the rest of the system
+    clean_seed = normalize_id(seed)
     
     # Generate SHA-256 hash
     hash_object = hashlib.sha256(clean_seed.encode())

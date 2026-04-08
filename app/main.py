@@ -17,7 +17,7 @@ from app.services.inventory import inventory_service
 from app.services.location_service import location_service
 from app.services.activity_service import activity_service
 from app.services.google_drive_service import drive_service
-from app.utils import generate_12_digit_hash
+from app.utils import generate_12_digit_hash, normalize_id
 from app.dependencies.auth import get_current_user, require_admin, require_staff
 from app.models.stock import StockTransferRequest
 
@@ -172,8 +172,12 @@ async def create_stock(
         merge_on = payload.get('merge_mode', False)
         final_merged = {}
         for item in items:
-            p_code = str(item.get('Product Code') or 'UKN').replace(" ", "").upper()
-            batch  = str(item.get('Batch Number') or 'NB').replace(" ", "").upper()
+            p_code_raw = str(item.get('Product Code') or 'UKN').upper()
+            batch_raw  = str(item.get('Batch Number') or 'NB').upper()
+            
+            # Use identical normalization as Sheets/Inventory services
+            p_code = normalize_id(p_code_raw)
+            batch  = normalize_id(batch_raw)
             
             # IDENTITY DEFINITION: Merged means 1 Per Product. Non-merged means 1 Per Batch.
             group_key = p_code if merge_on else f"{p_code}-{batch}"
@@ -234,8 +238,8 @@ async def _process_async_ingestion(header: dict, items: list, item_ids: list, us
         barcode_tasks = []
         for i, item_id in enumerate(item_ids):
             item_data = items[i]
-            p_code = str(item_data.get('Product Code', 'UKN')).replace(" ", "").upper()
-            batch_label = "M" if item_data.get('is_merged') else str(item_data.get('Batch Number', 'NB')).replace(" ", "").upper()
+            p_code = normalize_id(item_data.get('Product Code', 'UKN'))
+            batch_label = "M" if item_data.get('is_merged') else normalize_id(item_data.get('Batch Number', 'NB'))
             barcode_tasks.append(_process_barcode_archiving_async(item_id, p_code, batch_label))
         
         print(f"📡 Generating {len(barcode_tasks)} barcodes in parallel...")
@@ -246,46 +250,21 @@ async def _process_async_ingestion(header: dict, items: list, item_ids: list, us
             if link:
                 items[i]['Barcode Link'] = link
 
-        # 2. Update Google Sheets (Running in thread to prevent blocking worker)
-        try:
-            print(f"📊 SYNCING TO SHEETS: Batch size {len(item_ids)}")
-            await asyncio.to_thread(sheets_service.save_stock_batch, header, items, item_ids, user_display)
-        except Exception as sheet_err:
-            print(f"❌ SHEETS CRITICAL ERROR: {sheet_err}")
-            traceback.print_exc()
-            # Mark firestore as error
-            for item_id in item_ids:
-                try: db.collection('inventory_positions').document(item_id).update({'sync_status': 'error', 'sync_error': str(sheet_err)})
-                except: pass
-            return
-
-        # 2. Process Individual Items
-        total_items_in_batch = len(item_ids)
+        # 2. STEP 1: Update Firestore (Source of Truth - Marked as PENDING)
+        doc_ids_to_sync = []
         total_qty_combined = 0.0
-        invoice_num = header.get('Invoice Number', 'INV-N/A')
-        supplier = header.get('Supplier Name', 'N/A')
-        log_details = [] # Container for rich metadata
-
-        # 2. Process Individual Items
-        total_items_in_batch = len(item_ids)
-        total_qty_combined = 0.0
-        invoice_num = header.get('Invoice Number', 'INV-N/A')
-        supplier = header.get('Supplier Name', 'N/A')
-        log_details = [] # Container for rich metadata
-
+        log_details = []
+        
         for i, item_id in enumerate(item_ids):
             try:
                 item_data = items[i]
-                
-                # Firestore Save (New Upsert/Aggregation Logic)
                 distributions = item_data.get('distributions', [
                     {'loc_id': 'default', 'loc_name': 'Main Floor', 'qty': item_data.get('Quantity Received', 0)}
                 ])
                 
-                # Upsert to Firestore: Finds existing doc by Product/Batch or creates Auto-ID doc
-                # Returns the doc_id (Auto-ID) instead of using item_id as key
-                doc_id = inventory_service.upsert_position(
-                    barcode_id=item_id, # This is the unique label ID
+                # Returns deterministic doc_id, sets sync_status=pending
+                d_id = inventory_service.upsert_position(
+                    barcode_id=item_id, 
                     product_name=item_data.get('Product Name'), 
                     product_code=item_data.get('Product Code'), 
                     unit=item_data.get('Unit', 'PCS'),
@@ -297,38 +276,48 @@ async def _process_async_ingestion(header: dict, items: list, item_ids: list, us
                     user_name=user_display,
                     is_merged=item_data.get('is_merged', False)
                 )
+                doc_ids_to_sync.append(d_id)
                 
-                # Use the new doc_id (Auto-ID) from here on 🚀
-                doc_ref = inventory_service.collection.document(doc_id)
-
-                # Update link if generated
-                if item_data.get('Barcode Link'):
-                    inventory_service.update_barcode_link(doc_id, item_data['Barcode Link'])
-
-                # Accumulate for Single Activity Log (FIXED: actually increment volume)
+                # Accumulate for Log
                 item_qty = float(item_data.get('Quantity Received', 0))
                 total_qty_combined += item_qty
-                
-                # Build rich metadata for this entry
                 log_details.append({
                     'product_name': item_data.get('Product Name'),
                     'product_code': item_data.get('Product Code'),
-                    'batch': item_data.get('batch_number') or item_data.get('Batch Number'),
                     'qty': item_qty,
-                    'unit': item_data.get('Unit', 'MT'),
-                    'bags': item_data.get('Number of Bags', 0),
-                    'locations': [d.get('loc_name', 'Main') for d in distributions]
+                    'unit': item_data.get('Unit', 'MT')
                 })
+                
+                # Update link if generated
+                if item_data.get('Barcode Link'):
+                    inventory_service.update_barcode_link(d_id, item_data['Barcode Link'])
+                    
+            except Exception as e:
+                print(f"⚠️ Item Pre-save Error: {e}")
 
-                # MARK AS SYNCED ✅
-                doc_ref.update({'sync_status': 'synced', 'sync_at': int(time.time())})
-                        
-            except Exception as item_err:
-                print(f"⚠️ ITEM SYNC FAILURE [{item_id}]: {item_err}")
-                traceback.print_exc()
-                continue
+        # 3. STEP 2: Sync to Google Sheets (Batched)
+        try:
+            print(f"📊 SYNCING TO SHEETS: Batch size {len(doc_ids_to_sync)}")
+            await asyncio.to_thread(sheets_service.save_stock_batch, header, items, item_ids, user_display)
+            
+            # STEP 3: Mark as SUCCESS in Firestore
+            for d_id in doc_ids_to_sync:
+                try: inventory_service.mark_as_synced(d_id)
+                except: pass
+            print(f"✅ BATCH SYNC SUCCESSFUL: {len(doc_ids_to_sync)} docs finalized.")
+            
+        except Exception as sheet_err:
+            print(f"❌ SHEETS SYNC FAILED: {sheet_err}")
+            # Mark as ERROR for Janitor retry
+            for d_id in doc_ids_to_sync:
+                try: inventory_service.mark_as_sync_error(d_id, str(sheet_err))
+                except: pass
 
-        # SINGLE CONSOLIDATED LOG & NOTIFY
+        # 4. Final Logging and Notification
+        invoice_num = header.get('Invoice Number', 'INV-N/A')
+        supplier = header.get('Supplier Name', 'N/A')
+        total_items_in_batch = len(item_ids)
+
         activity_service.log_and_notify(
             user=user,
             action_type="IN",
@@ -336,11 +325,9 @@ async def _process_async_ingestion(header: dict, items: list, item_ids: list, us
             product_code=f"{total_items_in_batch} Identities",
             qty_change=total_qty_combined,
             location=supplier,
-            description=f"Batch Ingestion of {total_items_in_batch} stock items into warehouse registry.",
+            description=f"Batch Ingestion of {total_items_in_batch} stock items (Sync Status checked).",
             details=log_details
         )
-
-        print(f"✅ BATCH SYNC COMPLETED: {item_ids}")
 
     except Exception as e:
         print(f"🛑 CRITICAL ASYNC INGESTION FAILURE: {e}")
@@ -423,10 +410,10 @@ async def remove_stock(
             print(f"⚠️ [REMOVE_WARN] Item {stock_item_id} not found in Sheets.")
             raise HTTPException(status_code=404, detail="Stock item not found")
             
-        # 1. Audit + Alert Check Only (Frontend already deducted in Firestore)
+        # 1. Authoritative Deduction (Backend updates Firestore & Sheet)
         new_remaining = inventory_service.remove_stock_spatial(
             stock_item_id, loc_id, qty_to_remove, 
-            user=user, bags_removed=bags_removed, skip_deduction=True
+            user=user, bags_removed=bags_removed, skip_deduction=False
         )
         
         # 2. Log Activity & Notify Admins
@@ -680,6 +667,48 @@ async def beautify_sheets(user: dict = Depends(get_current_user)):
         return {"status": "success", "message": "All sheets have been beautified with Elite design tokens."}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Beautification failed: {str(e)}")
+
+# ── 🤖 ADMIN: SYNC JANITOR ──────────────────────────────────────────────────
+
+@app.post("/admin/sync-janitor")
+async def run_sync_janitor(background_tasks: BackgroundTasks, user: dict = Depends(get_current_user)):
+    """Finds all failed or pending syncs and re-tries them."""
+    if user.get('role') != 'admin':
+        # Safety: allow in dev if needed, but enforce for prod
+        raise HTTPException(status_code=403, detail="Admin access required")
+    
+    background_tasks.add_task(_janitor_routine)
+    return {"message": "Sync Janitor worker started in background."}
+
+async def _janitor_routine():
+    """Logic to reconcile pending syncs."""
+    print("🤖 JANITOR: Searching for pending syncs...")
+    try:
+        pendings = inventory_service.get_pending_syncs(limit=20)
+        
+        if not pendings:
+            print("🤖 JANITOR: Database is healthy. No pending syncs.")
+            return
+
+        for item in pendings:
+            try:
+                print(f"🤖 JANITOR: Retrying sync for {item.get('doc_id')}")
+                reconstructed_header = {
+                    'Supplier Name': item.get('supplier_name', 'RECOVERED'),
+                    'Invoice Number': 'RECOVERY-SYNC'
+                }
+                # Sync to Sheets
+                sheets_service.save_stock_batch(
+                    header=reconstructed_header,
+                    items=[item],
+                    item_ids=[item.get('barcode_id', 'RECOVERED')],
+                    user_display="Sync Janitor"
+                )
+                inventory_service.mark_as_synced(item.get('doc_id'))
+            except Exception as e:
+                print(f"🤖 JANITOR ERROR: Failed to recover {item.get('doc_id')}: {e}")
+    except Exception as e:
+        print(f"🤖 JANITOR SYSTEM ERROR: {e}")
 
 if __name__ == "__main__":
     import uvicorn

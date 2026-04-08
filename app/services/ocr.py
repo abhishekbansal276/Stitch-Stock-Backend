@@ -377,10 +377,10 @@ class OCRService:
 
             if key in merged:
                 base = merged[key]
-                base["Quantity Received"] = self._sum_str(
+                base["Quantity Received"] = self._sum_val(
                     base.get("Quantity Received"), item.get("Quantity Received"))
-                base["Number of Bags"] = int(float(self._sum_str(
-                    base.get("Number of Bags", 0), item.get("Number of Bags", 0))))
+                base["Number of Bags"] = int(self._sum_val(
+                    base.get("Number of Bags", 0), item.get("Number of Bags", 0)))
                 base["Total Amount"] = (
                     self._to_float(base.get("Total Amount"))
                     + self._to_float(item.get("Total Amount")))
@@ -420,8 +420,8 @@ class OCRService:
         except Exception:
             return 0.0
 
-    def _sum_str(self, a, b) -> str:
-        return str(self._to_float(a) + self._to_float(b))
+    def _sum_val(self, a, b) -> float:
+        return self._to_float(a) + self._to_float(b)
 
     def _optimize_image(self, content: bytes, mime_type: str) -> (bytes, str):
         """Resizes and compresses image to reduce payload size and costs."""

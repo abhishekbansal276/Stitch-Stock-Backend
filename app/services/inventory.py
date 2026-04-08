@@ -1,11 +1,12 @@
 import time
 import uuid
+import re
 from typing import List, Dict
 from app.services.firebase import db
 from google.cloud.firestore_v1.base_query import FieldFilter
 from google.cloud import firestore
 from app.services.email_service import email_service
-from app.utils import generate_12_digit_hash
+from app.utils import generate_12_digit_hash, normalize_id
 
 class InventoryService:
     def __init__(self):
@@ -25,25 +26,57 @@ class InventoryService:
         batch_number = str(batch_number or 'NB').strip().upper() if batch_number else 'NB'
         if batch_number == "": batch_number = 'NB'
         
-        # FIND TARGET DOCUMENT...
-        query = self.collection.where(filter=FieldFilter('product_code', '==', product_code))
-        
-        # If not merged, we are batch-specific. If merged, we aggregate ALL of this product.
-        if not is_merged and batch_number and batch_number != 'NB':
-            query = query.where(filter=FieldFilter('batch_number', '==', batch_number))
-        elif is_merged:
-            query = query.where(filter=FieldFilter('batch_number', '==', 'AGGREGATED'))
-
-        docs = list(query.limit(1).stream())
-        
-        doc_ref = None
-        existing_data = {}
-        
-        if docs:
-            doc_ref = docs[0].reference
-            existing_data = docs[0].to_dict()
+        # ── 2. DETERMINISTIC IDENTITY (Safety against Duplicates) ──
+        clean_code = normalize_id(product_code)
+        if is_merged:
+            target_doc_id = f"PROD-{clean_code}"
         else:
-            doc_ref = self.collection.document() # Firestore auto-id
+            clean_batch = normalize_id(batch_number)
+            target_doc_id = f"BATCH-{clean_code}-{clean_batch}"
+            
+        doc_ref = self.collection.document(target_doc_id)
+        doc_snap = doc_ref.get()
+        
+        existing_data = {}
+        legacy_doc_ids = []
+        
+        # ── 3. LEGACY HUNT: Find and Merge auto-generated 'Ghost' documents ──
+        try:
+            # Search for ANY document with this product code
+            query = self.collection.where(filter=FieldFilter('product_code', '==', product_code))
+            legacy_docs = list(query.stream())
+            
+            for ld in legacy_docs:
+                if ld.id == target_doc_id:
+                    existing_data = ld.to_dict()
+                else:
+                    # Found a legacy Auto-ID document! Merge its guts.
+                    print(f"🕵️ LEGACY HUNT: Found ghost document {ld.id} for {product_code}. Merging...")
+                    legacy_data = ld.to_dict()
+                    legacy_doc_ids.append(ld.id)
+                    
+                    # Merge distributions from ghost to master
+                    ghost_dists = legacy_data.get('distributions', [])
+                    master_dists = existing_data.get('distributions', [])
+                    
+                    # Shallow merge for speed, cleanup happens below
+                    existing_data['distributions'] = master_dists + ghost_dists
+                    
+                    # Merge barcode_ids
+                    ghost_bids = legacy_data.get('barcode_ids', [])
+                    master_bids = existing_data.get('barcode_ids', [])
+                    existing_data['barcode_ids'] = list(set(master_bids + ghost_bids))
+
+            if not existing_data and doc_snap.exists:
+                existing_data = doc_snap.to_dict()
+
+            if doc_snap.exists:
+                print(f"📦 UPSERT: Consolidating into master document {target_doc_id}")
+            else:
+                print(f"🆕 UPSERT: Initializing master document {target_doc_id}")
+        except Exception as e:
+            print(f"⚠️ Legacy Hunt Error: {e}")
+            if doc_snap.exists: existing_data = doc_snap.to_dict()
 
         # ── 2. PREPARE & MERGE DISTRIBUTIONS ──
         current_dists = existing_data.get('distributions', [])
@@ -117,7 +150,9 @@ class InventoryService:
             'created_by': existing_data.get('created_by', user_name),
             'updated_by': user_name,
             'updated_at': int(time.time()),
-            'is_merged': is_merged
+            'is_merged': is_merged,
+            'sync_status': 'pending', # 🆕 Track for Sheets sync
+            'last_sync_error': None
         }
         
         # If existing doc has a barcode link, keep it (unless we want to overwrite with newest)
@@ -126,9 +161,40 @@ class InventoryService:
 
         doc_ref.set(doc_data)
         
+        # ── 4. SEARCH & DESTROY: Cleanup legacy docs ──
+        if legacy_doc_ids:
+            print(f"🧹 CLEANUP: Deleting {len(legacy_doc_ids)} legacy documents...")
+            for old_id in legacy_doc_ids:
+                try:
+                    self.collection.document(old_id).delete()
+                    print(f"🗑️ Deleted legacy doc: {old_id}")
+                except Exception as e:
+                    print(f"⚠️ Error deleting legacy doc {old_id}: {e}")
+        
         # ── CROSS-INDEX UPDATE ──
         self._update_cross_index(doc_ref.id, merged_dists)
         return doc_ref.id
+
+    def mark_as_synced(self, doc_id: str):
+        """Mark a document as successfully synced to Google Sheets."""
+        self.collection.document(doc_id).update({
+            'sync_status': 'success',
+            'last_synced_at': int(time.time()),
+            'last_sync_error': None
+        })
+
+    def mark_as_sync_error(self, doc_id: str, error: str):
+        """Mark a document as failed to sync with a specific error."""
+        self.collection.document(doc_id).update({
+            'sync_status': 'error',
+            'last_sync_error': str(error),
+            'last_sync_attempt': int(time.time())
+        })
+
+    def get_pending_syncs(self, limit: int = 50) -> List[Dict]:
+        """Find any documents that have not been successfully synced to Google Sheets."""
+        query = self.collection.where(filter=FieldFilter('sync_status', '!=', 'success')).limit(limit)
+        return [doc.to_dict() for doc in query.stream()]
 
     def get_existing_barcode(self, doc_id: str) -> str:
         """Returns existing barcode link from doc_id."""
@@ -322,13 +388,13 @@ class InventoryService:
         doc_ref = self.collection.document(doc_id)
         
         if skip_deduction:
-            print(f"📖 [AUDIT_MODE] Stock {barcode_id} removal (Audit Check Only)")
+            print(f"📖 [AUDIT_MODE] Stock {doc_id} removal (Audit Check Only)")
             transaction = db.transaction()
             self.check_and_alert_only(transaction, doc_ref)
             data = doc_ref.get().to_dict()
             new_total = data.get('total_qty', 0)
         else:
-            print(f"⚡ [DEDUCTION_MODE] Stock {barcode_id} removal from location {loc_id}")
+            print(f"⚡ [DEDUCTION_MODE] Stock {doc_id} removal from location {loc_id}")
             transaction = db.transaction()
             # We must pass the transaction object to the internal logic
             new_total = self.deduct_from_location(transaction, doc_ref, loc_id, qty, bags_removed=bags_removed)
