@@ -1020,14 +1020,30 @@ class SheetsService:
                         batch_new_barcodes[item_id] = len(register_appends)
                         register_appends.append(row_data)
 
-                    # ── B. Movement Entry ──
+                    # ── B. Movement Entries (One per location) ──
                     trans_id = header.get("Invoice Number") or f"TRANS-{str(uuid.uuid4())[:4].upper()}"
-                    movements_append.append([
-                        now.strftime("%Y-%m-%d %H:%M:%S"), name, "IN", 
-                        self._clean_num(qty), self._clean_num(bags),
-                        "Warehouse", "Intake", user_display,
-                        f"MOV-{uuid.uuid4().hex[:6].upper()}", item_id, trans_id, item_id, "default"
-                    ])
+                    dists = item.get('distributions', [])
+                    
+                    if not dists:
+                        # Fallback for legacy or unknown distribution data
+                        movements_append.append([
+                            now.strftime("%Y-%m-%d %H:%M:%S"), name, "IN", 
+                            self._clean_num(qty), self._clean_num(bags),
+                            "Warehouse", "Intake", user_display,
+                            f"MOV-{uuid.uuid4().hex[:6].upper()}", item_id, trans_id, item_id, "default"
+                        ])
+                    else:
+                        for d in dists:
+                            d_qty = self._to_float(d.get('qty', 0))
+                            if d_qty < 0.001: continue
+                            
+                            d_bags = self._to_float(d.get('bags', 0))
+                            movements_append.append([
+                                now.strftime("%Y-%m-%d %H:%M:%S"), name, "IN", 
+                                self._clean_num(d_qty), self._clean_num(d_bags),
+                                d.get('warehouse', 'Warehouse'), d.get('location', 'Intake'), user_display,
+                                f"MOV-{uuid.uuid4().hex[:6].upper()}", item_id, trans_id, d.get('dist_id', 'NB'), d.get('warehouse_id', 'default')
+                            ])
 
                 # ── 3. CONSOLIDATE SUMMARY UPDATES ────────────────────────────────────
                 session_summary_map = {}
