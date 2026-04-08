@@ -278,37 +278,58 @@ class InventoryService:
 
     def find_by_dist_id(self, dist_id: str) -> Dict:
         """
-        Robust search for a stock item by its specific shelf/zone position ID OR main Barcode ID.
-        Uses a three-tier discovery system.
+        Robust search for a stock item by its specific shelf/zone position ID,
+        main Barcode ID, or Product Code.
+        Uses a four-tier discovery system.
         """
+        if not dist_id: return {}
+        
+        # Normalize input for comparison across all tiers
+        clean_id = normalize_id(dist_id)
+
         # ── TIER 1: CROSS-INDEX LOOKUP (Location Discovery) ──
-        idx_doc = self.index_collection.document(dist_id).get()
-        if idx_doc.exists:
-            map_data = idx_doc.to_dict()
-            doc_id = map_data.get('barcode_id') # In code, we often use 'barcode_id' for 'doc_ref_id'
-            if doc_id:
-                doc = self.collection.document(doc_id).get()
-                if doc.exists:
-                    data = doc.to_dict()
-                    target_dist = next((d for d in data.get('distributions', []) if d.get('dist_id') == dist_id), None)
-                    return {"item": data, "target_distribution": target_dist}
+        # We try both raw and clean IDs for maximum compatibility
+        for lookup_id in [dist_id, clean_id]:
+            idx_doc = self.index_collection.document(lookup_id).get()
+            if idx_doc.exists:
+                map_data = idx_doc.to_dict()
+                doc_id = map_data.get('barcode_id')
+                if doc_id:
+                    doc = self.collection.document(doc_id).get()
+                    if doc.exists:
+                        data = doc.to_dict()
+                        target_dist = next((d for d in data.get('distributions', []) if d.get('dist_id') == lookup_id), None)
+                        return {"item": data, "target_distribution": target_dist}
 
         # ── TIER 2: MAIN BARCODE ARRAY SEARCH ──
         # Search the 'barcode_ids' array for the scanned ID
-        query = self.collection.where(filter=FieldFilter('barcode_ids', 'array_contains', dist_id)).limit(1).get()
+        for query_id in [dist_id, clean_id]:
+            query = self.collection.where(filter=FieldFilter('barcode_ids', 'array_contains', query_id)).limit(1).get()
+            if query:
+                data = query[0].to_dict()
+                target_dist = data.get('distributions', [None])[0]
+                return {"item": data, "target_distribution": target_dist}
+
+        # ── TIER 3: LEGACY DIRECT LOOKUP ──
+        for direct_id in [dist_id, clean_id]:
+            doc = self.collection.document(direct_id).get()
+            if doc.exists:
+                data = doc.to_dict()
+                return {"item": data, "target_distribution": data.get('distributions', [None])[0]}
+            
+        # ── TIER 4: PRODUCT CODE LOOKUP (Broadest Match) ──
+        # Useful for manufacturer barcodes or typed product codes
+        query = self.collection.where(filter=FieldFilter('product_code', '==', dist_id)).limit(1).get()
+        if not query and clean_id != dist_id:
+            query = self.collection.where(filter=FieldFilter('product_code', '==', clean_id)).limit(1).get()
+            
         if query:
             data = query[0].to_dict()
-            # If scanning a main product label, target the first distribution as default
+            # Default to first distribution
             target_dist = data.get('distributions', [None])[0]
             return {"item": data, "target_distribution": target_dist}
-
-        # ── TIER 3: LEGACY DIRECT LOOKUP (Compatibility) ──
-        doc = self.collection.document(dist_id).get()
-        if doc.exists:
-            data = doc.to_dict()
-            return {"item": data, "target_distribution": data.get('distributions', [None])[0]}
             
-        print(f"⚠️ DISPATCH FAILED: Position {dist_id} not found in any index.")
+        print(f"⚠️ DISPATCH FAILED: Position {dist_id} (Clean: {clean_id}) not found in any index.")
         return {}
 
     @staticmethod

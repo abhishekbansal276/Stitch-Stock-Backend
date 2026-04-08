@@ -1338,28 +1338,53 @@ class SheetsService:
             print(f"Update stock quantity error: {e}")
 
     def get_stock_item(self, item_id: str) -> Dict:
-        if not self.service:
+        """
+        Robust lookup by Barcode ID OR Product Code.
+        Normalizes both the input and the sheet values to ensure resilience.
+        """
+        if not self.service or not item_id:
             return {}
+            
         try:
             h = {n: i for i, n in enumerate(self.BASE_SCHEMA)}
             b_id_idx = h.get("Barcode ID", 20)
+            p_code_idx = h.get("Product Code", 5)
             max_col  = self._get_col_letter(len(self.BASE_SCHEMA) - 1)
+            
+            # Normalize target for comparison
+            target = normalize_id(item_id)
             
             result = self.service.spreadsheets().values().get(
                 spreadsheetId=self.spreadsheet_id, range=f"Stock Register!A:{max_col}"
             ).execute().get("values", [])
+            
             for row in result:
-                if row and len(row) > b_id_idx and str(row[b_id_idx]) == str(item_id):
-                    return {
-                        "stock_item_id": row[b_id_idx],
-                        "item_name": row[h["Product Name"]],
-                        "quantity_remaining": self._to_float(row[h["Quantity Received"]]),
-                        "unit": row[h["Unit"]],
-                        "supplier_name": row[h["Supplier Name"]],
-                        "product_code": row[h["Product Code"]]
-                    }
+                if row and len(row) > max(b_id_idx, p_code_idx):
+                    # Check Barcode ID (Strongest Match)
+                    s_barcode = normalize_id(row[b_id_idx])
+                    if s_barcode == target:
+                        return {
+                            "stock_item_id": row[b_id_idx],
+                            "item_name": row[h["Product Name"]],
+                            "quantity_remaining": self._to_float(row[h["Quantity Received"]]),
+                            "unit": row[h["Unit"]],
+                            "supplier_name": row[h["Supplier Name"]],
+                            "product_code": row[h["Product Code"]]
+                        }
+                    
+                    # Check Product Code (Fallback Match)
+                    s_code = normalize_id(row[p_code_idx])
+                    if s_code == target:
+                        return {
+                            "stock_item_id": row[b_id_idx],
+                            "item_name": row[h["Product Name"]],
+                            "quantity_remaining": self._to_float(row[h["Quantity Received"]]),
+                            "unit": row[h["Unit"]],
+                            "supplier_name": row[h["Supplier Name"]],
+                            "product_code": row[h["Product Code"]]
+                        }
         except Exception as e:
-            print(f"Get stock item error: {e}")
+            print(f"🛑 [ROBUST-LOOKUP-FAILED] {e}")
         return {}
 
     def get_summary_stats(self, period: str = "all") -> Dict:

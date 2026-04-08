@@ -450,7 +450,13 @@ async def get_stock_by_position(
     user: dict = Depends(get_current_user)
 ):
     """Fetch main item + target distribution for a shelf-specific QR code."""
-    result = inventory_service.find_by_dist_id(dist_id)
+    # Normalize ID for robust cross-index/legacy discovery
+    clean_dist_id = normalize_id(dist_id)
+    result = inventory_service.find_by_dist_id(clean_dist_id)
+    if not result:
+        # Fallback to raw ID for absolute compatibility if normalization was too aggressive
+        result = inventory_service.find_by_dist_id(dist_id)
+        
     if not result:
         raise HTTPException(status_code=404, detail="Position not found")
     return result
@@ -463,13 +469,24 @@ async def get_stock_item(
     """
     Fetch details + Spatial Positions (from Firestore).
     """
+    # 0. Normalize Input
+    clean_id = normalize_id(stock_item_id)
+
     # 1. Use robust discovery to find Position in Firestore (resolves barcode -> BATCH doc)
-    result = inventory_service.find_by_dist_id(stock_item_id)
+    # Search with clean ID first, fallback to raw
+    result = inventory_service.find_by_dist_id(clean_id)
+    if not result:
+        result = inventory_service.find_by_dist_id(stock_item_id)
+        
     pos = result.get('item')
-    search_id = pos.get('barcode_id', stock_item_id) if pos else stock_item_id
+    search_id = pos.get('barcode_id', clean_id) if pos else clean_id
 
     # 2. Get master details from Sheets
     item = sheets_service.get_stock_item(search_id)
+    if not item:
+        # Final fallback check with raw ID if sheets lookup failed with clean ID
+        item = sheets_service.get_stock_item(stock_item_id)
+        
     if not item:
         raise HTTPException(status_code=404, detail="Stock item not found")
         
