@@ -771,31 +771,38 @@ class SheetsService:
                     }
                 })
 
-        # ── 12. DATE COLUMNS — consistent formatting ──────────────────────────
-        date_cols = {
-            "Stock Register":  [0, 21, 23],
-            "Stock Movements": [0],
-            "Stock Summary":   [6],
+        # ── 12. DATE COLUMNS ───────────────────────────────────────────────
+        # Tiered system: Clean Date vs. Full Timestamp
+        yyyy_mm_dd_cols = {
+            "Stock Register":  [0],
+            "Stock Movements": [],
+            "Stock Summary":   [],
         }.get(title, [])
 
-        for col in date_cols:
+        full_date_time_cols = {
+            "Stock Register":  [22, 24],
+            "Stock Movements": [0],
+            "Stock Summary":   [9],
+        }.get(title, [])
+
+        # TIER 1: yyyy-mm-dd (Clean Bill Date)
+        for col in yyyy_mm_dd_cols:
             if col < num_cols:
                 requests.append({
                     "repeatCell": {
-                        "range": {
-                            "sheetId": sheet_id,
-                            "startRowIndex": frozen_rows,
-                            "startColumnIndex": col, "endColumnIndex": col + 1,
-                        },
-                        "cell": {
-                            "userEnteredFormat": {
-                                "horizontalAlignment": "CENTER",
-                                "numberFormat": {
-                                    "type": "DATE_TIME",
-                                    "pattern": "dd MMM yyyy HH:mm",
-                                },
-                            }
-                        },
+                        "range": {"sheetId": sheet_id, "startRowIndex": frozen_rows, "startColumnIndex": col, "endColumnIndex": col+1},
+                        "cell": {"userEnteredFormat": {"horizontalAlignment": "CENTER", "numberFormat": {"type": "DATE", "pattern": "yyyy-mm-dd"}}},
+                        "fields": "userEnteredFormat(horizontalAlignment,numberFormat)",
+                    }
+                })
+
+        # TIER 2: Full Timestamp (System Metadata)
+        for col in full_date_time_cols:
+            if col < num_cols:
+                requests.append({
+                    "repeatCell": {
+                        "range": {"sheetId": sheet_id, "startRowIndex": frozen_rows, "startColumnIndex": col, "endColumnIndex": col+1},
+                        "cell": {"userEnteredFormat": {"horizontalAlignment": "CENTER", "numberFormat": {"type": "DATE_TIME", "pattern": "dd MMM yyyy HH:mm"}}},
                         "fields": "userEnteredFormat(horizontalAlignment,numberFormat)",
                     }
                 })
