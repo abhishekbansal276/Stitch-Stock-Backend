@@ -1099,7 +1099,7 @@ class SheetsService:
                         row_data[h["Quantity Received"]] = self._clean_num(qty)
                         row_data[h["Unit"]] = unit
                         row_data[h["Batch Number"]] = str(item.get("Batch Number", "")).strip()
-                        row_data[h["Number of Bags"]] = self._clean_num(bags)
+                        row_data[h["Number of Bags"]] = int(round(bags))
                         row_data[h["Storage Type"]] = item.get("storage_type") or "UNIT"
                         row_data[h["Barcode ID"]] = item_id
                         row_data[h["Created At"]] = int(now.timestamp())
@@ -1219,8 +1219,8 @@ class SheetsService:
                         })
                     else:
                         summary_appends.append([
-                            name, code, self._clean_num(qty), self._clean_num(bags), unit, 
-                            self._clean_num(qty), 0, self._clean_num(bags), 0, 
+                            name, code, self._clean_num(qty), int(round(bags)), unit, 
+                            self._clean_num(qty), 0, int(round(bags)), 0, 
                             now.strftime("%Y-%m-%d %H:%M:%S")
                         ])
                         summary_data_map[code_key] = {"row": 9999}
@@ -1359,7 +1359,7 @@ class SheetsService:
             res = self.service.spreadsheets().values().get(
                 spreadsheetId=self.spreadsheet_id, range="Stock Summary!C:F"
             ).execute()
-            rows = res.get("values", [])[1:]
+            rows = res.get("values", [])[2:]  # Skip super-header (row 1) + column headers (row 2)
             t_in = t_out = t_bal = low = 0.0
             for row in rows:
                 if len(row) >= 4:
@@ -1434,27 +1434,27 @@ class SheetsService:
                 updated_at_col = self._get_col_letter(h.get("Updated At", 24))
                 updated_by_col = self._get_col_letter(h.get("Updated By", 25))
 
-                # Fetch current qty and bags
-                range_to_fetch = f"Stock Register!{qty_col}{row_idx}:{bags_col}{row_idx}"
-                res = self.service.spreadsheets().values().get(
+                # Fetch current qty and bags with targeted single-cell reads for accuracy
+                qty_res = self.service.spreadsheets().values().get(
                     spreadsheetId=self.spreadsheet_id,
-                    range=range_to_fetch
+                    range=f"Stock Register!{qty_col}{row_idx}"
                 ).execute()
-                
-                row_vals = res.get("values", [[0, 0, 0]])[0]
-                curr_qty = self._to_float(row_vals[0])
-                # Index 2 in fetched row_vals corresponds to Bags column if range is Qty(7) to Bags(9)
-                curr_bags = self._to_float(row_vals[2]) if len(row_vals) > 2 else 0
+                bags_res = self.service.spreadsheets().values().get(
+                    spreadsheetId=self.spreadsheet_id,
+                    range=f"Stock Register!{bags_col}{row_idx}"
+                ).execute()
+                curr_qty = self._to_float(qty_res.get("values", [[0]])[0][0])
+                curr_bags = self._to_float(bags_res.get("values", [[0]])[0][0])
                 
                 new_qty = max(0.0, curr_qty - qty)
-                new_bags = max(0.0, curr_bags - bags_removed)
+                new_bags = max(0, int(round(curr_bags)) - int(round(bags_removed)))
 
                 # Batch update the row
                 self.service.spreadsheets().values().batchUpdate(
                     spreadsheetId=self.spreadsheet_id,
                     body={"valueInputOption": "USER_ENTERED", "data": [
                         {"range": f"Stock Register!{qty_col}{row_idx}", "values": [[self._clean_num(new_qty)]]},
-                        {"range": f"Stock Register!{bags_col}{row_idx}", "values": [[self._clean_num(new_bags)]]},
+                        {"range": f"Stock Register!{bags_col}{row_idx}", "values": [[int(round(new_bags))]]},
                         {"range": f"Stock Register!{updated_at_col}{row_idx}:{updated_by_col}{row_idx}", "values": [[self._get_now_ist().strftime("%Y-%m-%d %H:%M:%S"), user_display]]}
                     ]}
                 ).execute()
@@ -1501,7 +1501,7 @@ class SheetsService:
                 spreadsheetId=self.spreadsheet_id, range="Stock Summary!A:J"
             ).execute()
             rows = res.get("values", [])
-            data = rows[1:] if len(rows) > 1 else []
+            data = rows[2:] if len(rows) > 2 else []  # Skip super-header (row 1) + column headers (row 2)
             
             found_idx = -1
             code_to_find = normalize_id(code)
@@ -1510,7 +1510,7 @@ class SheetsService:
                 if len(row) >= 2:
                     current_code = normalize_id(row[1])
                     if current_code == code_to_find:
-                        found_idx = i + 2 # +2 because 1-based and skip header
+                        found_idx = i + 3  # +3: 1-based index + 2 skipped header rows
                         break
             
             now = self._get_now_ist()
@@ -1545,11 +1545,11 @@ class SheetsService:
                 
                 update_range = f"Stock Summary!C{found_idx}:J{found_idx}"
                 row_vals = [
-                    self._clean_num(new_bal), self._clean_num(new_bags), 
-                    curr_row[4] if len(curr_row) > 4 else "PCS", 
-                    self._clean_num(new_in_qty), self._clean_num(new_out_qty), 
-                    self._clean_num(new_in_bags), self._clean_num(new_out_bags), 
-                    now
+                    self._clean_num(new_bal), int(round(new_bags)),
+                    curr_row[4] if len(curr_row) > 4 else "PCS",
+                    self._clean_num(new_in_qty), self._clean_num(new_out_qty),
+                    int(round(new_in_bags)), int(round(new_out_bags)),
+                    now.strftime("%Y-%m-%d %H:%M:%S")
                 ]
                 self.service.spreadsheets().values().update(
                     spreadsheetId=self.spreadsheet_id,

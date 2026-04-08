@@ -1230,6 +1230,110 @@ FIELD MAPPING — Accept ANY of these aliases (case-insensitive, fuzzy-match)
     Same product on multiple rows (different batch/partial qty) → extract as
     SEPARATE items in the array. Never merge or sum line items.
     If multiple batches are found, you MUST create a unique JSON object for each batch.
+
+═══════════════════════════════════════════════════════════════════
+DIGIT ACCURACY RULES — OCR Error Prevention (READ CAREFULLY)
+═══════════════════════════════════════════════════════════════════
+
+COMMON OCR CONFUSIONS — CHECK EVERY NUMBER:
+
+  ① 0 vs O/o    → Zero looks like letter O in poor scans.
+                   If in a numeric field and surrounded by digits, it is 0.
+                   e.g. "1O06" → likely "1006" | "O.5" → likely "0.5"
+
+  ② 1 vs l/I/i  → Digit 1, lowercase L, uppercase I, lowercase i all look alike.
+                   In numeric fields: always treat as digit 1.
+                   e.g. "l25" → "125" | "1OI" in number → "101"
+
+  ③ 2 vs Z      → "2" and "Z" look similar in handwriting/bad print.
+                   e.g. "Z5.00" in amount field → "25.00"
+
+  ④ 3 vs 8      → Top half of 8 can look like 3 in poor scans.
+                   VERIFY: Qty × Rate must ≈ Total Amount.
+
+  ⑤ 5 vs 6      → Curved top of 6 can look like 5 in low-res scans.
+                   e.g. "5000" vs "6000" — cross-check with totals.
+
+  ⑥ 6 vs 0      → "6" and "0" can swap in bold/compressed fonts.
+                   Verify with grand total.
+
+  ⑦ 7 vs 1      → Diagonal stroke of 7 may look like 1 in some fonts.
+                   e.g. "7.675" vs "1.675" — check if qty makes sense with bags.
+
+  ⑧ Comma vs Period (Decimal):
+                   Indian invoices use "1,00,000.00" (comma=thousands, period=decimal).
+                   Strip ALL commas from Indian invoices before parsing numbers.
+                   e.g. "1,50,000.50" → 150000.50
+
+  ⑨ ₹ / Rs / Rs. prefix: Always strip before parsing. "₹1,50,000.50" → 150000.50
+
+  ⑩ Lakh / Crore words:
+                   "1.5 Lakh" → 150000 | "1 Crore" → 10000000
+                   "17,78,144" → 1778144 (Indian lakh format)
+
+CROSS-VALIDATION CHECKS (perform before output):
+  ✓ CHECK 1 — Line level:   Qty × Rate ≈ Line Total Amount (tolerance ±1%)
+  ✓ CHECK 2 — Item total:   Sum of all Line Totals ≈ Sub Total
+  ✓ CHECK 3 — Tax check:    CGST ≈ SGST (for intra-state; if not equal, re-examine)
+  ✓ CHECK 4 — Grand total:  Taxable Amount + Sum(All Taxes) + Freight ≈ Grand Total
+  ✓ CHECK 5 — Words check:  Grand Total in words (if present) must match numeric total
+  ✓ CHECK 6 — Bag sense:    Number of Bags should be a whole integer, never a decimal.
+                             307 bags ✓ | 30.7 bags ✗ → re-examine
+
+═══════════════════════════════════════════════════════════════════
+EXTRACTION RULES
+═══════════════════════════════════════════════════════════════════
+
+1.  STRICT JSON OUTPUT
+    Return ONLY valid JSON. No scratchpad, no explanation, no markdown fences,
+    no comments inside JSON. All numbers must be plain floats or integers.
+
+2.  SUPPLIER vs BUYER DISAMBIGUATION
+    Always extract SUPPLIER (invoice issuer), never buyer/consignee/sold-to party.
+
+3.  INVOICE NUMBER PRIORITY
+    Serial Number > Tax Invoice No > Invoice No > DO No > LR No > Order No > IRN.
+    Extract the primary number only. If "& Date" follows, extract number only.
+
+4.  TAX EXTRACTION — ZERO DOUBLE COUNTING
+    Extract each tax line ONCE using the bill-level summary table.
+    IGST only → CGST=0, SGST=0. CGST+SGST only → IGST=0.
+    Never sum or split components. Never merge CGST+SGST into one field.
+
+5.  FREIGHT — TOTAL AMOUNT NOT RATE
+    Extract the TOTAL freight rupee amount. Rs/MT or Rs/KG is the RATE — ignore it.
+
+6.  UNIT NORMALIZATION
+    TO/Ton/Tonne/Tonnes/M.T./MTS → MT
+    Nos/Number/No./EA/Each/Unit → PCS
+    Kgs/KGS → KG | Ltr/Lt/Litre → LTR | Mtr/M/Metre → MTR
+    Qnl/Qtl/Quintal → QTL
+
+7.  QUANTITY — NUMBERS ONLY
+    Strip unit text from quantity cell. "7.675 TO" → 7.675.
+
+8.  DATE NORMALIZATION
+    All dates → YYYY-MM-DD.
+    "March 08, 2026" → "2026-03-08" | "08/03/26" → "2026-03-08"
+
+9.  MISSING FIELDS
+    Genuinely absent → "" for strings, 0.0 for numbers. Never hallucinate.
+
+10. NUMBER OF BAGS — INTEGER ONLY
+    Physical package count. Always a whole number. Never a decimal.
+    "307 Bags" → 307. If unclear, extract 0.
+
+11. GSTIN FORMAT VALIDATION
+    Valid GSTIN = 15 chars: 2-digit state code + 10-char PAN + 1 entity + 1 Z + 1 check.
+    e.g. 09AAACG1209J3ZS. If extracted value does not match this pattern, re-examine.
+
+12. VEHICLE NUMBER FORMAT
+    Indian vehicle numbers follow: [State Code][District][Series][Number]
+    e.g. GJ05CW8825 | MH12AB1234. Extract full alphanumeric. Do not split at spaces.
+
+13. RATE × QTY = TOTAL VALIDATION
+    For every line item, verify: Rate per Unit × Quantity Received ≈ Total Amount.
+    If mismatch > 2%, re-examine all three values using the OCR confusion table above.
 """
 
 ocr_service = OCRService()
