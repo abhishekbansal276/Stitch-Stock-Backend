@@ -15,6 +15,7 @@ from google.cloud.firestore_v1.base_query import FieldFilter
 from google.auth import exceptions as auth_exceptions
 from app.services.firebase import db, clean_private_key, BASE_DIR, get_service_account_info
 from app.utils import normalize_id
+from app.services.fcm_service import fcm_service
 
 
 # ── DESIGN TOKENS ─────────────────────────────────────────────────────────────
@@ -950,6 +951,31 @@ class SheetsService:
                     
                     reg_rows = batch_res[0].get("values", []) if len(batch_res) > 0 else []
                     sum_rows = batch_res[1].get("values", []) if len(batch_res) > 1 else []
+
+                    # ── 1a. DUPLICATE BILL CHECK ──────────────────────────────────────
+                    target_invoice = str(header.get("Invoice Number", "")).strip().upper()
+                    target_supplier = str(header.get("Supplier Name", "")).strip()
+                    
+                    if target_invoice and target_invoice != "NB" and target_invoice != "INV-N/A":
+                        # Invoice Number is at index 2 in BASE_SCHEMA
+                        invoice_col_idx = 2 
+                        for row in reg_rows:
+                            if len(row) > invoice_col_idx:
+                                existing_invoice = str(row[invoice_col_idx]).strip().upper()
+                                if existing_invoice == target_invoice:
+                                    # DUPLICATE DETECTED!
+                                    err_msg = f"Bill #{target_invoice} from {target_supplier} was already entered in the Stock Register."
+                                    print(f"🛑 [DUP-CHECK] {err_msg}")
+                                    
+                                    # Trigger Push Notification to Admins
+                                    fcm_service.send_multicast_to_admins(
+                                        title="Bill Already Entered",
+                                        body=err_msg,
+                                        data={"invoice_no": target_invoice, "type": "duplicate_alert"}
+                                    )
+                                    
+                                    # Abort the process
+                                    raise Exception(f"Duplicate Bill Detected: {target_invoice}")
             
                     # Map column names for fast access
                     h = self.header_map
