@@ -701,7 +701,7 @@ class SheetsService:
         })
 
         # ── 11. NUMERIC COLUMNS ──────────────────────────────────────────────
-        # Three-tier system to prevent trailing dots
+        # Four-tier system to enforce specific precision requirements
         qty_cols = {
             "Stock Register":  [7],
             "Stock Movements": [3],
@@ -714,8 +714,14 @@ class SheetsService:
             "Stock Summary":   [3, 7, 8],
         }.get(title, [])
 
-        general_numeric_cols = {
+        financial_cols = {
             "Stock Register":  [11, 12, 13, 14, 15, 16],
+            "Stock Movements": [],
+            "Stock Summary":   [],
+        }.get(title, [])
+
+        general_numeric_cols = {
+            "Stock Register":  [],
             "Stock Movements": [],
             "Stock Summary":   [],
         }.get(title, [])
@@ -742,7 +748,18 @@ class SheetsService:
                     }
                 })
 
-        # TIER 3: General (Precise but No Trailing Dots, e.g. 125,120)
+        # TIER 3: Financial (Forced 2 Decimals, Stock Register only, e.g. 125,120.00)
+        for col in financial_cols:
+            if col < num_cols:
+                requests.append({
+                    "repeatCell": {
+                        "range": {"sheetId": sheet_id, "startRowIndex": frozen_rows, "startColumnIndex": col, "endColumnIndex": col+1},
+                        "cell": {"userEnteredFormat": {"horizontalAlignment": "RIGHT", "numberFormat": {"type": "NUMBER", "pattern": "#,##0.00"}}},
+                        "fields": "userEnteredFormat(horizontalAlignment,numberFormat)",
+                    }
+                })
+
+        # TIER 4: General (Precise but No Trailing Dots, e.g. 125,120)
         for col in general_numeric_cols:
             if col < num_cols:
                 requests.append({
