@@ -42,28 +42,40 @@ class InventoryService:
         
         # ── 3. LEGACY HUNT: Find and Merge auto-generated 'Ghost' documents ──
         try:
-            # Search for ANY document with this product code
+            # Targeted Search: 
+            # - If summary (PROD-), we can pull broadly to aggregate.
+            # - If batch-specific, ONLY merge if it's an exact batch match.
             query = self.collection.where(filter=FieldFilter('product_code', '==', product_code))
+            
+            if not is_merged:
+                # IMPORTANT: Only pull documents that share the same batch to avoid contamination.
+                query = query.where(filter=FieldFilter('batch_number', '==', batch_number))
+                
             legacy_docs = list(query.stream())
             
             for ld in legacy_docs:
+                l_data = ld.to_dict()
+                
+                # S-Tier Protection: NEVER merge a summary (PROD-) into a specific batch document.
+                if not is_merged and l_data.get('is_merged') == True:
+                    continue
+
                 if ld.id == target_doc_id:
-                    existing_data = ld.to_dict()
+                    existing_data = l_data
                 else:
-                    # Found a legacy Auto-ID document! Merge its guts.
-                    print(f"🕵️ LEGACY HUNT: Found ghost document {ld.id} for {product_code}. Merging...")
-                    legacy_data = ld.to_dict()
+                    # Found a legacy or matching batch document! Merge its guts.
+                    print(f"🕵️ LEGACY HUNT: Found related document {ld.id} for {product_code} (Batch: {batch_number}). Merging...")
                     legacy_doc_ids.append(ld.id)
                     
                     # Merge distributions from ghost to master
-                    ghost_dists = legacy_data.get('distributions', [])
+                    ghost_dists = l_data.get('distributions', [])
                     master_dists = existing_data.get('distributions', [])
                     
                     # Shallow merge for speed, cleanup happens below
                     existing_data['distributions'] = master_dists + ghost_dists
                     
                     # Merge barcode_ids
-                    ghost_bids = legacy_data.get('barcode_ids', [])
+                    ghost_bids = l_data.get('barcode_ids', [])
                     master_bids = existing_data.get('barcode_ids', [])
                     existing_data['barcode_ids'] = list(set(master_bids + ghost_bids))
 
