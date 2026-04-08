@@ -196,7 +196,7 @@ class OCRService:
                     model=self.gemini_model,
                     contents=[
                         types.Part.from_bytes(data=content, mime_type=mime_type),
-                        types.Part.from_text(text=EXTRACTION_PROMPT),
+                        types.Part.from_text(text=GEMINI_PROMPT),
                     ],
                     config=types.GenerateContentConfig(
                         response_mime_type="application/json",
@@ -245,7 +245,7 @@ class OCRService:
                         {
                             "role": "user",
                             "content": [
-                                {"type": "text", "text": EXTRACTION_PROMPT},
+                                {"type": "text", "text": GROQ_PROMPT},
                                 {
                                     "type": "image_url",
                                     "image_url": {
@@ -452,7 +452,7 @@ class OCRService:
 
 # ── EXTRACTION PROMPT ─────────────────────────────────────────────────────────
 
-EXTRACTION_PROMPT = """
+GEMINI_PROMPT = """
 Extract invoice data from the image into the specified JSON format.
 Ensure 100% accuracy for financial totals and product details.
 Consolidate identical product codes by summing quantities and joining batches.
@@ -914,8 +914,321 @@ EXTRACTION RULES
 
 18. RATE × QTY = TOTAL VALIDATION
     For every line item, verify: Rate per Unit × Quantity Received ≈ Total Amount.
-    If mismatch > 2%, re-examine all three values for OCR digit errors.
     Use the cross-validation digit confusion table (Section above) to correct.
+"""
+
+GROQ_PROMPT = """
+Extract invoice data from the image into the specified JSON format.
+Ensure 100% accuracy for financial totals and product details.
+
+**CARDINAL RULE**: NEVER consolidate or merge line items. If a product appears on multiple rows or has multiple batch numbers, you MUST create a separate JSON object for each one. Do NOT use commas in the "Batch Number" field to list multiple values.
+
+COMMAND — Return the data in the following standardized JSON format:
+{
+  "header": {
+    "Date": "YYYY-MM-DD",
+    "Invoice Number": "...",
+    "Supplier Name": "...",
+    "Supplier GST": "...",
+    "Vehicle Number": "...",
+    "Transporter Name": "...",
+    "Taxable Amount": 0.0,
+    "Taxes": [
+      { "label": "CGST", "amount": 0.0 },
+      { "label": "SGST", "amount": 0.0 },
+      { "label": "IGST", "amount": 0.0 }
+    ],
+    "Transport / Freight": 0.0,
+    "Grand Total": 0.0
+  },
+  "items": [
+    {
+      "Product Code": "...",
+      "Product Name": "...",
+      "Batch Number": "...",
+      "Quantity Received": 0.0,
+      "Unit": "...",
+      "Number of Bags": 0,
+      "Rate per Unit": 0.0,
+      "Total Amount": 0.0
+    }
+  ]
+}
+
+═══════════════════════════════════════════════════════════════════════
+FIELD MAPPING — Accept ANY of these aliases (case-insensitive, fuzzy-match)
+═══════════════════════════════════════════════════════════════════════
+
+▸ Date: Date, Dated, Bill Date, Date of Issue, Doc Date, Invoice Date, Voucher Date,
+  Entry Date, Transaction Date, Challan Date, GRN Date, PO Date, Delivery Date,
+  Receipt Date, Posting Date, Value Date, Tax Invoice Date, Dt, Dte, Date of Supply,
+  Date of Delivery, Dispatch Date, Shipment Date, Order Date, Booking Date,
+  Created Date, Due Date, Expiry Date, Valid Till, Date of Prep, Date of Preparation,
+  Date of Removal, Prep Date, Issue Date, Invoice Dt, Bill Dt, Challan Dt,
+  Document Date, DATE OF ISSUE, Date & Time (extract date part only),
+  Inv. Date, Inv Date, Tax Inv. Date, Sale Date, Purchase Date, Supply Date,
+  Gate Entry Date, Inward Date, Outward Date, Material Date, Consignment Date,
+  Loading Date, Unloading Date, Weighment Date, Billing Date, Generation Date...
+
+▸ Invoice Number: Invoice No, Bill No, Bill Number, Serial No, Serial Number, Ref No,
+  Challan No, D.O. No, DO No, Tax Invoice No, Invoice #, Bill #, Voucher No,
+  Voucher Number, Document No, Doc No, Doc Number, GRN No, GRN Number, PO No,
+  PO Number, Order No, Order Number, Delivery Note No, DN No, LR No, LR Number,
+  Docket No, AWB No, E-Way Bill No, E-Way No, E-WayBill No, EWB No, EWB Number,
+  Receipt No, Memo No, Credit Note No, Debit Note No, Note No, Consignment No,
+  Parcel No, Slip No, Challan Number, Ref Number, Reference No, Reference Number,
+  Transaction No, Transaction ID, Indent No, Gate Entry No, Inward No,
+  Material Receipt No, MRN No, SRN No, SERIAL NUMBER, UPG No, Sr. No, SR NO,
+  SR. NO., Supply Invoice No, Tax Inv No, Tax Inv. No., IRN (only if no invoice found),
+  ORDER No, D.O. No & Date (number only), L.R. No & Date (number only),
+  REF1, REF 1, Ref. No, Inv No, Inv. No., Inv #, Supply No, SB No, BE No,
+  Customs No, Port Code, Job No, Work Order No, Contract No, Agreement No,
+  Consignment Note No, CN No, RR No, Railway Receipt No, PWB No, Airway Bill No,
+  Booking No, Lot No (invoice level), Batch Invoice No, Run No (invoice level),
+  Proforma Invoice No, PI No, Advance Invoice No, Tax Credit Note No,
+  Debit Memo No, Credit Memo No, Supplementary Invoice No, Revised Invoice No...
+
+▸ Supplier Name: Supplier, Sold By, Seller, From, Consignor, Company, Vendor,
+  Vendor Name, Party Name, Party, Manufacturer, Distributor, Dealer, Trader,
+  Firm Name, Business Name, Billed By, Dispatched By, Shipped By, Forwarded By,
+  Agent, Broker, Mill Name, Factory Name, Source, Principal, Exporter, Importer,
+  Proprietor, Organization, Entity Name, Supplier / Vendor, Name of Supplier,
+  Name of Seller, Creditor, Remitter, Issuer, Consignor Name, Seller Name,
+  Service Provider, Biller, Invoice Party, Billing Party, Originator,
+  Maker, Producer, Grower, Packer, Brand Owner, Label Holder, Licensor,
+  **CRITICAL**: Always extract the SUPPLIER / INVOICE ISSUER, never the buyer/consignee...
+
+▸ Supplier GST: GST No, GSTIN, GST Number, Tax ID, TIN No, TIN, VAT No, VAT Number,
+  Service Tax No, CIN No, PAN No, PAN Number, GSTIN of Supplier, Seller GSTIN,
+  Vendor GSTIN, Party GSTIN, Tax Registration No, Tax Reg No, GST Reg No,
+  GST Registration Number, CST No, LST No, Excise No, IEC Code, FSSAI No,
+  Import Export Code, Udyam No, MSME No, GST NO. (under SUPPLIER column),
+  **FORMAT**: Must be 15-character alphanumeric (e.g. 09AAACG1209J3ZS).
+  Extract SUPPLIER's GSTIN only. Reject buyer/consignee GSTIN...
+
+▸ Vehicle Number: Vehicle No, Veh. No, Truck No, RC No, Registration Number, Reg No,
+  Transport No, Lorry No, Lorry Number, Truck Number, Tempo No, Vehicle Registration,
+  Vehicle Reg No, Tractor No, Tanker No, Container No, Fleet No, Conveyance No,
+  Carrier No, Car No, Auto No, Van No, LCV No, HCV No, Transport Vehicle No,
+  VEHICLE REGN. NO., Veh Reg No, Vehicle Regd No, Vehicle Registration No, Vehicle No.,
+  Regn. No., Reg. No., RC Number, GJ/MH/UP/HP/DL/RJ/MP/KA/TN/AP/TS prefix plates,
+  Trailer No, Semi-Trailer No, Bulker No, Tipper No, Container No, Flat Bed No,
+  Wagon No, Rail No (for rail transport), Ship No, Vessel No (for sea transport)...
+
+▸ Transporter Name: Transporter, Transporter Name, Transport Company, Carrier Name,
+  Logistics Company, Shipping Company, Freight Company, Courier, Forwarding Agent,
+  Transport Agency, Transporter / Carrier, Carried By, Dispatched Via, Shipped Via,
+  Transport Party, Lorry Operator, Fleet Owner, GTA Name, Goods Transport Agency,
+  TRANSPORTER NAME, Transport Name, Logistics Partner, LR Issued By,
+  Courier Company, Freight Forwarder, C&F Agent, Clearing Agent, Shipping Agent,
+  Freight Broker, Cargo Agent, Hauler, Road Carrier, Rail Carrier, Air Carrier,
+  Sea Carrier, NVOCC, MTO, Multimodal Operator, Express Company, Last Mile Partner...
+
+▸ Product Code: Product Code, Item Code, Part No, SKU, Article No, Model No, ID,
+  Part Number, Item No, Item Number, Material Code, Material No, Cat No,
+  Catalogue No, Catalogue Number, Stock Code, Stock No, Reference Code, Ref Code,
+  Product ID, Item ID, BOM Code, Component Code, HSN, HSN Code, HSN/SAC, SAC Code,
+  UPC Code, EAN Code, ASIN, Internal Code, System Code, Drawing No,
+  Specification No, Grade Code, Variant Code, PRODUCT CODE (column header),
+  Item Ref, P. Code, Prod Code, Code, Item#, Product#, Material Number,
+  Stock Keeping Unit, Commodity Code, Tariff Code, HS Code, CAS No (chemicals),
+  UN No (hazardous), IMDS No, OEM Code, Vendor Code, Buyer Code, Alt Code,
+  Substitute Code, Legacy Code, Old Code, New Code, Cross Ref Code,
+  Color Code, Size Code, Grade, Quality Code, Batch Code (if used as product ID)...
+  **CRITICAL**: If an internal "Product Code", "SKU", or "Item ID" is present, use it as 
+  the primary "Product Code". Use HSN/SAC only as a fallback if no other code exists.
+
+▸ Product Name: Description, Description of Goods, Product Name, Material,
+  Item Description, Item Name, Product Description, Goods Description, Particulars,
+  Commodity, Article, Material Description, Name of Product, Name of Goods,
+  Name of Item, Material Name, Commodity Name, Subject, Nature of Goods,
+  Details, Specification, Product Details, Item Particulars, Goods, Stock Item,
+  Service Description, Nature of Supply, Category, Product Title, Brand Name,
+  Short Description, Full Description, DESCRIPTION OF GOODS, Product, Item,
+  Good, Supply Description, Goods/Services, Product & Grade, Grade,
+  Material Grade, Product Grade, Prod. Name, Item Desc, Article Name, Goods Name,
+  Chemical Name, Trade Name, Generic Name, Common Name, Technical Name,
+  IUPAC Name, Composition, Formulation, Mixture, Blend, Alloy, Grade/Spec,
+  Size/Spec, Dimension, Type, Variety, Make, Model, Configuration, Pack Size...
+
+▸ Batch Number: Batch No, Batch Number, Lot No, Lot Number, Batch/Lot No,
+  Manufacturing Lot, Mfg Batch, Production Batch, Batch ID, Lot ID, Serial Batch,
+  BATCH NO. (column header), Batch, Lot, Production No, Run No, Cast No,
+  Heat No, Melt No, Charge No, Coil No, Roll No, Bundle No, Drum No, Can No,
+  Pack Lot, Manufacture Batch, Quality Lot, MFG Lot, Production Lot,
+  Manufacturing Batch No, Mfg. Batch No, Process Batch, Campaign No,
+  Expiry Batch, EXP Batch, Best Before Batch, BBD Batch, COA Batch,
+  Test Batch, QC Batch, Release Batch, Approved Batch, Quarantine Batch...
+
+▸ Quantity Received: Quantity, Qty, Qty Received, Received Qty, Nos, Pcs, Pieces,
+  Count, Number, No. of Units, Units Received, Total Qty, Dispatched Qty,
+  Shipped Qty, Delivered Qty, Accepted Qty, Inspected Qty, Actual Qty, GRN Qty,
+  Inward Qty, Received Quantity, Net Qty, Gross Qty, Billed Qty, Ordered Qty,
+  Supply Qty, Qty Supplied, Qty Accepted, Qty Delivered, Volume, Amount of Goods,
+  QUANTITY (column), Qty (MT), Qty (KG), Qty (PCS), Net Weight, Net Wt,
+  Net Wt., NW, Gross Weight (use net if both), GW, Gross Wt, Total Weight,
+  Wt., Weight, Measure, Measurement, Extent, Magnitude, Size, Count Received,
+  **CRITICAL**: Extract as plain number only. "7.675 TO" → 7.675...
+
+▸ Unit (UOM) — WEIGHT:
+  MT, Metric Tonne, Metric Ton, M.T., M/T, MTS, TO, Ton, Tonne, Tonnes, Tons,
+  T (when weight context), Long Ton, Short Ton, LT, ST,
+  KG, Kilogram, Kilograms, Kgs, Kg., K.G., KGS,
+  G, GM, Gram, Grams, Grm, Gm., GMS,
+  MG, Milligram, Milligrams, MGS,
+  LB, Lbs, Pound, Pounds, Lb.,
+  OZ, Ounce, Ounces,
+  QUINTAL, QTL, Qtl., Q, Quintal, Quintals, QNT, QNTL,
+  → NORMALIZE: TO/Ton/Tonne/Tonnes/M.T. → MT | Kgs/KGS → KG | Qnl/Qtl → QTL
+
+▸ Unit (UOM) — VOLUME:
+  LTR, L, Liter, Litre, Litres, Liters, Ltr., Lt,
+  ML, Milliliter, Millilitre, Milliliters, Millilitres, Ml,
+  KL, Kiloliter, Kilolitre, KL., KLT,
+  CBM, M3, Cubic Meter, Cubic Metre, CUM, CU.M,
+  CFT, CuFt, Cubic Feet, Cubic Foot, CU.FT,
+  GAL, Gallon, Gallons, US Gal, Imp Gal,
+  BBL, Barrel, Barrels, BRL,
+  → NORMALIZE: Ltr/Lt/Litre → LTR | Ml → ML | KL/KLT → KL
+
+▸ Unit (UOM) — LENGTH / AREA:
+  MTR, M, Meter, Metre, Meters, Metres, Mtr., Mt (length context),
+  CM, Centimeter, Centimetre, CMS,
+  MM, Millimeter, Millimetre, MMS,
+  FT, Feet, Foot, Ft.,
+  INCH, In, Inches, IN,
+  YD, Yard, Yards,
+  RMT, RM, Running Meter, Running Metre, R/MTR, RNG MTR,
+  SQM, M2, Square Meter, Square Metre, Sq.M, SQ.MTR,
+  SQFT, Sq.Ft, Square Feet, Square Foot, SQ.FT,
+  SQYD, Sq.Yd, Square Yard,
+  → NORMALIZE: Mtr/M/Metre → MTR | Sq.M/SQM → SQM | Sq.Ft → SQFT
+
+▸ Unit (UOM) — PIECES / COUNT:
+  PCS, Piece, Pieces, PC, Pcs.,
+  NOS, No., Nos., Numbers, Number,
+  EA, Each, Each.,
+  UNIT, Units, U,
+  SET, Sets, ST,
+  PAIR, Pairs, PR,
+  DOZEN, DZ, Doz, Dozen, Dozens,
+  GROSS, GR (count context), Gross,
+  → NORMALIZE: Nos/Number/No. → PCS | Each/EA → PCS | Unit/U → PCS
+
+▸ Unit (UOM) — PACKAGING:
+  BAG, Bags, BG,
+  BUNDLE, Bundles, BDL, Bndl,
+  BOX, Boxes, BX,
+  CTN, Carton, Cartons, Ctn.,
+  ROLL, Rolls, RL, Rll,
+  DRUM, Drums, DR,
+  CAN, Cans, CN,
+  TIN, Tins, TN,
+  POUCH, Pouches, PCH,
+  PACKET, Packets, PKT, Pkt.,
+  SACK, Sacks, SK,
+  CASE, Cases, CS,
+  PALLET, Pallets, PLT,
+  BALE, Bales, BL,
+  CRATE, Crates, CR,
+  COIL, Coils, CL,
+  SLAB, Slabs, SB (packaging context),
+  → NORMALIZE: Bndl → BUNDLE | Ctn/CTN → CTN | Pkt → PACKET
+
+▸ Unit (UOM) — INDUSTRIAL / CONSTRUCTION:
+  BAR, Bars, BR,
+  ROD, Rods, RD,
+  PIPE, Pipes, PP,
+  SHEET, Sheets, SHT,
+  PLATE, Plates, PLT (plate context),
+  SLAB, Slabs,
+  COIL, Coils,
+  LENGTH, Lengths, LNG,
+  SECTION, Sections, SEC,
+  BEAM, Beams,
+  ANGLE, Angles,
+  CHANNEL, Channels,
+  FLANGE, Flanges,
+  FITTING, Fittings,
+  JOINT, Joints,
+  VALVE, Valves,
+  PUMP, Pumps,
+  MOTOR, Motors,
+  → Keep as-is unless a standard abbreviation exists
+
+▸ Taxable Amount: Total Taxable Value, Sub-Total, Net Weight Total Value,
+  Total before Tax, Pre-Tax Total, Basic Total, Assessed Value Total,
+  Amount Before Tax, TAXABLE AMOUNT, Taxable Value, Total Taxable Amount,
+  Total Basic Amount, Gross Taxable, Subtotal, SUB TOTAL, Total (Excl. Tax),
+  Total (Excl. GST), Total Ex-Tax, Total Pre-Tax, Net Amount (before GST),
+  Basic Amount Total, Chargeable Amount, Value Before Tax, Taxable Base,
+  Taxable Supply Value, Assessable Value, Pre-GST Total, Tax Base,
+  Total Assessable Value, Aggregate Value, Basic Value, Supply Value...
+
+▸ Transport / Freight: Freight, Freight Amount, Freight Charges, Transport Charges,
+  Cartage, Delivery Charges, Carriage, Carriage Inward, Carriage Outward,
+  Forwarding Charges, Handling Charges, Loading Charges, Unloading Charges,
+  Logistics Charges, Shipping Charges, Courier Charges, Packing & Forwarding,
+  P&F Charges, Octroi, Entry Tax, Toll Charges, Transit Charges, Conveyance Charges,
+  Drayage, Porterage, Haulage, Godown Charges, Demurrage, Transportation Cost,
+  Freight & Cartage, LR Charges, Dispatch Charges, FREIGHT (row label), Freight Total,
+  Freight Value, Transport Total, Logistics Total, Door Delivery, Home Delivery,
+  Last Mile Charges, First Mile Charges, Cross Docking, Transhipment Charges,
+  Container Freight, Port Handling, CFS Charges, Inland Haulage, ICD Charges,
+  **CRITICAL**: Extract TOTAL FREIGHT RUPEE AMOUNT only, never the per-unit rate...
+
+▸ Grand Total: Grand Total, Invoice Total, Total Payable, Net Amount, Bill Value,
+  Net Total, Gross Total, Final Total, Total Amount Payable, GRAND TOTAL,
+  INVOICE VALUE, Invoice Grand Total, Total Invoice Value, Total Bill Amount,
+  Amount Payable, Net Payable, Balance Due, ROUND OFF TOTAL, Rounded Total,
+  Total (Incl. Tax), Total (Incl. GST), Total with GST, Total Including All Taxes,
+  Rs. Total, INR Total, Net Due, Closing Balance, Total Charges, Final Amount,
+  Bill Total, Payable Amount, QUALITY CHECK INVOICE VALUE, Amount in Words (as backup),
+  Total Amount Due, Invoice Amount, Final Invoice Value, Net Invoice Amount,
+  Total Sum, Total Consideration, Contract Value, PO Value, Supply Value...
+
+▸ Taxes — INDIAN GST COMPONENTS:
+  IGST, Integrated GST, Integrated Tax, IGST Amount, IGST @%, IGST @ %,
+  CGST, Central GST, Central Tax, CGST Amount, CGST @%, CGST @ %,
+  SGST, State GST, State Tax, SGST Amount, SGST @%, SGST @ %,
+  UTGST, Union Territory GST, UT Tax, UTGST Amount,
+  GST Cess, GST Compensation Cess, Cess, Cess Amount,
+  Additional Cess, Higher Cess, Clean Energy Cess,
+  Tobacco Cess, Pan Masala Cess, Luxury Cess,
+
+▸ Taxes — CUSTOMS & IMPORT DUTIES:
+  BCD, Basic Customs Duty, Basic Duty, Import Duty,
+  CVD, Countervailing Duty,
+  SAD, Special Additional Duty, Additional Customs Duty,
+  AIDC, Agriculture Infrastructure Development Cess,
+  SWS, Social Welfare Surcharge, Surcharge on BCD,
+  Anti-Dumping Duty, ADD, Safeguard Duty, SGD,
+  Countervailing Duty on Subsidy, CVD Subsidy,
+  Protective Duty, Transitional Product Specific Safeguard Duty,
+
+▸ Taxes — LEGACY / PRE-GST (older invoices):
+  VAT, Value Added Tax, VAT Amount, VAT @%,
+  CST, Central Sales Tax, CST Amount,
+  Excise Duty, CENVAT, Central Excise, BED, Basic Excise Duty,
+  AED, Additional Excise Duty, SED, Special Excise Duty,
+  Service Tax, ST Amount, Education Cess, EC, SHE Cess, SHEC,
+  Swachh Bharat Cess, SBC, Krishi Kalyan Cess, KKC,
+  Entry Tax, Octroi, LBT, Local Body Tax,
+  Purchase Tax, Turnover Tax, TOT,
+
+▸ Taxes — OTHER DEDUCTIONS / CHARGES (as negative tax or separate):
+  TDS, Tax Deducted at Source, TDS Amount, TDS @%,
+  TCS, Tax Collected at Source, TCS Amount, TCS @%,
+  WHT, Withholding Tax,
+  Reverse Charge, RCM Amount,
+  **FORMAT ALL TAXES AS**:
+  [{"label": "IGST", "amount": 271242.22}, {"label": "CGST", "amount": 0.0}, ...]
+  Extract EACH component ONCE. Never sum CGST+SGST into IGST or vice versa...
+
+10. MULTI-LINE ITEMS
+    Same product on multiple rows (different batch/partial qty) → extract as
+    SEPARATE items in the array. Never merge or sum line items.
+    If multiple batches are found, you MUST create a unique JSON object for each batch.
 """
 
 ocr_service = OCRService()
