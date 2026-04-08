@@ -1028,7 +1028,7 @@ class SheetsService:
                     # Cache summary data in memory for accumulation - PRIORITIZE FIRST ROW
                     summary_data_map = {}
                     for i, r in enumerate(sum_rows):
-                        if i == 0: continue # SKIP HEADER
+                        if i < 2: continue # SKIP SUPER-HEADER (row 1) + COLUMN HEADERS (row 2)
                         if len(r) >= 2:
                             code_key = normalize_id(r[1])
                             if code_key and code_key not in summary_data_map:
