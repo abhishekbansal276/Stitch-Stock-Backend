@@ -371,6 +371,12 @@ async def _process_async_ingestion(header: dict, items: list, item_ids: list, us
                 if item_data.get('Barcode Link'):
                     inventory_service.update_barcode_link(d_id, item_data['Barcode Link'])
                     
+                # ── SYNC LOCK: Mark as INGESTING so Reaper ignores it ──
+                db.collection("inventory_positions").document(d_id).update({
+                    "sync_status": "ingesting",
+                    "updated_at": int(time.time())
+                })
+                    
             except Exception as e:
                 print(f"⚠️ Item Pre-save Error: {e}")
 

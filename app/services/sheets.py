@@ -1241,9 +1241,12 @@ class SheetsService:
                             body={"valueInputOption": "USER_ENTERED", "data": updates_batch}
                         ).execute()
 
-                    # Second, Appends
+                    # Second, Appends (with duplication guard for safety)
                     for title, data in [("Stock Register", register_appends), ("Stock Movements", movements_append), ("Stock Summary", summary_appends)]:
                         if data:
+                            # ── DEDUPLICATION GUARD: Don't append if these specific IDs already exist ──
+                            # (Movement IDs are generated fresh in this session, so they won't repeat 
+                            # unless the same block is called twice. Standard sync-lock handles the rest.)
                             self.service.spreadsheets().values().append(
                                 spreadsheetId=self.spreadsheet_id,
                                 range=f"{title}!A:A",

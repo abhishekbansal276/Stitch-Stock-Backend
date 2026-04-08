@@ -122,14 +122,29 @@ class InventoryService:
             else:
                 merged_dists.append(new_d)
 
-        # ── 3. FINAL AUDIT: Ensure NO empty batch numbers survive ──
+        # ── 3. FINAL AUDIT & CONSOLIDATION: Merge distribution duplicates ──
+        consolidated = {}
+        for d in merged_dists:
+            # Identity key: Warehouse + Location + Batch
+            key = f"{normalize_id(d.get('warehouse', 'WH'))}-{normalize_id(d.get('location', 'LOC'))}-{normalize_id(d.get('batch_number', 'NB'))}"
+            
+            if key not in consolidated:
+                consolidated[key] = d
+            else:
+                consolidated[key]['qty'] = float(consolidated[key].get('qty', 0)) + float(d.get('qty', 0))
+                consolidated[key]['bags'] = int(consolidated[key].get('bags', 0)) + int(d.get('bags', 0))
+        
+        merged_dists = list(consolidated.values())
+
+        # Final audit for missing batch numbers
         for d in merged_dists:
             if not d.get('batch_number') or str(d['batch_number']).strip() == "":
                 d['batch_number'] = batch_number or 'NB'
 
         # ── 3. FINALIZE DATA ──
         total_qty = sum(float(d.get('qty', 0)) for d in merged_dists)
-        total_bags = int(existing_data.get('number_of_bags', 0)) + int(number_of_bags)
+        # Bag count is now derived from the consolidated distributions for truth
+        total_bags = sum(int(d.get('bags', 0)) for d in merged_dists)
         
         # Track all barcode IDs associated with this document
         barcode_ids = existing_data.get('barcode_ids', [])
