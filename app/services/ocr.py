@@ -456,6 +456,7 @@ class OCRService:
 GEMINI_PROMPT = """
 Extract invoice data from the image into the specified JSON format.
 Ensure 100% accuracy for financial totals and product details.
+EXTRACT ALL NUMERIC FIELDS (Quantity, Rate, Totals, Amount) WITH 4 DECIMAL PLACES (e.g. 7.6750) if precision is present in the image.
 Consolidate line items ONLY if the Product Code, Product Name, and Batch Number are exactly the same. In such cases, sum their quantities and bags. If the Batch Numbers are different, you MUST keep them as separate line items. Do NOT use comma-separated strings for Batch Numbers.
 
 COMMAND — Return the data in the following standardized JSON format:
@@ -921,6 +922,7 @@ EXTRACTION RULES
 GROQ_PROMPT = """
 Extract invoice data from the image into the specified JSON format.
 Ensure 100% accuracy for financial totals and product details.
+EXTRACT ALL NUMERIC FIELDS (Quantity, Rate, Totals, Amount) WITH 4 DECIMAL PLACES (e.g. 7.6750) if precision is present in the image.
 
 **CARDINAL RULE**: Consolidate line items ONLY if the Product Code, Product Name, and Batch Number are exactly the same. In such cases, sum their quantities and bags. If the Batch Numbers are different, you MUST keep them as separate line items. NEVER use commas in the "Batch Number" field to list multiple values.
 

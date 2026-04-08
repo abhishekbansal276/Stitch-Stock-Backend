@@ -1611,7 +1611,7 @@ class SheetsService:
     def _clean_num(self, val: float) -> any:
         """Removes trailing .0 but keeps other decimals for professional Sheets look."""
         if val is None: return 0
-        v = round(float(val), 3)
+        v = round(float(val), 4)
         if v == int(v):
             return int(v)
         return v
