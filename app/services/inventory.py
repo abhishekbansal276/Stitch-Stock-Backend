@@ -124,13 +124,15 @@ class InventoryService:
         if barcode_id not in barcode_ids:
             barcode_ids.append(barcode_id)
 
-        # Search index calculation
+        # Search index calculation (Human-Readable only)
         search_locations = []
         for d in merged_dists:
             if float(d.get('qty', 0)) > 0:
-                search_locations.append(d.get('warehouse'))
-                search_locations.append(d.get('dist_id'))
-                search_locations.append(f"{d.get('warehouse')} - {d.get('location')}")
+                wh = d.get('warehouse')
+                zn = d.get('location')
+                if wh: search_locations.append(wh)
+                if zn: search_locations.append(zn)
+                if wh and zn: search_locations.append(f"{wh} - {zn}")
 
         doc_data = {
             'doc_id': doc_ref.id, 
@@ -353,6 +355,14 @@ class InventoryService:
                 search_locations.append(d.get('dist_id'))
                 search_locations.append(f"{d.get('warehouse')} - {d.get('location')}")
         
+        search_locations = []
+        for d in distributions:
+            wh = d.get('warehouse')
+            zn = d.get('location')
+            if wh: search_locations.append(wh)
+            if zn: search_locations.append(zn)
+            if wh and zn: search_locations.append(f"{wh} - {zn}")
+            
         new_location_ids = list(set([l for l in search_locations if l]))
         
         # ── Check for Low Stock Alert ──
@@ -552,6 +562,14 @@ class InventoryService:
             search_locations.append(d.get('dist_id'))
             search_locations.append(f"{d.get('warehouse')} - {d.get('location')}")
         
+        search_locations = []
+        for d in distributions:
+            wh = d.get('warehouse')
+            zn = d.get('location')
+            if wh: search_locations.append(wh)
+            if zn: search_locations.append(zn)
+            if wh and zn: search_locations.append(f"{wh} - {zn}")
+            
         new_location_ids = list(set([l for l in search_locations if l]))
 
         transaction.update(doc_ref, {
