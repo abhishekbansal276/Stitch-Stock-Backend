@@ -1033,14 +1033,25 @@ class SheetsService:
                             f"MOV-{uuid.uuid4().hex[:6].upper()}", item_id, trans_id, item_id, "default"
                         ])
                     else:
+                        # ── PRECISION: Convert units vs bags based on user entry mode ──
+                        # Ratio: total units / total bags for this specific item batch
+                        ratio = (qty / bags) if bags > 0 else 1.0
+                        
                         for d in dists:
-                            d_qty = self._to_float(d.get('qty', 0))
-                            if d_qty < 0.001: continue
+                            val = self._to_float(d.get('qty', 0))
+                            if val < 0.001: continue
                             
-                            d_bags = self._to_float(d.get('bags', 0))
+                            u_type = d.get('unit_type', 'qty')
+                            if u_type == 'bags':
+                                moving_bags = val
+                                moving_qty  = val * ratio
+                            else:
+                                moving_qty  = val
+                                moving_bags = val / ratio if ratio > 0 else 0
+                            
                             movements_append.append([
                                 now.strftime("%Y-%m-%d %H:%M:%S"), name, "IN", 
-                                self._clean_num(d_qty), self._clean_num(d_bags),
+                                self._clean_num(moving_qty), self._clean_num(moving_bags),
                                 d.get('warehouse', 'Warehouse'), d.get('location', 'Intake'), user_display,
                                 f"MOV-{uuid.uuid4().hex[:6].upper()}", item_id, trans_id, d.get('dist_id', 'NB'), d.get('warehouse_id', 'default')
                             ])
