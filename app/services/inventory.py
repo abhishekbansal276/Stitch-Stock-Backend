@@ -350,51 +350,48 @@ class InventoryService:
             )
 
     @staticmethod
-    @firestore.transactional
-    def deduct_from_location(transaction, doc_ref, loc_id: str, qty: float, bags_removed: float = 0):
-        """Atomic deduction from a specific shelf/zone ID."""
-        print(f"📉 [DEDUCTION] Attempting to remove {qty} from location {loc_id} of item {doc_ref.id}")
-        """Atomic deduction from a specific shelf/zone ID."""
+    def _execute_deduction_internal(transaction, doc_ref, loc_id: str, qty: float, bags_removed: float = 0):
+        """Internal synchronous logic for deduction, to be called within an existing transaction."""
         snapshot = doc_ref.get(transaction=transaction)
         if not snapshot.exists:
-            raise Exception("Stock position not found in Firestore")
+            raise Exception(f"Stock position {doc_ref.id} not found in Firestore")
         
         data = snapshot.to_dict()
         distributions = data.get('distributions', [])
         found = False
         
+        actual_qty_to_remove = qty
         new_distributions = []
         for dist in distributions:
             if dist.get('dist_id') == loc_id:
                 curr_qty = float(dist.get('qty', 0))
                 curr_bags = float(dist.get('bags', 0))
                 
-                if curr_qty < qty - 0.001:
-                    qty = curr_qty
+                # Cap deduction at current availability
+                if curr_qty < actual_qty_to_remove - 0.001:
+                    actual_qty_to_remove = curr_qty
                 
-                dist['qty'] = float(curr_qty - qty)
+                dist['qty'] = float(curr_qty - actual_qty_to_remove)
                 dist['bags'] = float(max(0, curr_bags - bags_removed))
                 found = True
             new_distributions.append(dist)
             
-        if not found:
-            raise Exception(f"Position ID {loc_id} not found for this item.")
+        if not found and loc_id != "SUMMARY_DEDUCTION":
+            raise Exception(f"Position ID {loc_id} not found for item {doc_ref.id}.")
+        elif not found and loc_id == "SUMMARY_DEDUCTION":
+            # For summaries, if specifically named dist not found, we deduct from 'total_qty' 
+            # and maybe the first available distribution that matches product/batch logic.
+            # However, for PROD- docs, we often just want to update the total_qty and maybe distribution sums.
+            pass
             
         old_total = float(data.get('total_qty', 0))
         old_bags = float(data.get('number_of_bags', 0))
-        new_total = old_total - qty
+        new_total = old_total - actual_qty_to_remove
         new_bags = max(0, old_bags - bags_removed)
         
-        # Update searchable locations index
+        # Recalculate location search index
         search_locations = []
         for d in new_distributions:
-            if float(d.get('qty', 0)) > 0:
-                search_locations.append(d.get('warehouse'))
-                search_locations.append(d.get('dist_id'))
-                search_locations.append(f"{d.get('warehouse')} - {d.get('location')}")
-        
-        search_locations = []
-        for d in distributions:
             wh = d.get('warehouse')
             zn = d.get('location')
             if wh: search_locations.append(wh)
@@ -431,6 +428,13 @@ class InventoryService:
         })
         return new_total
 
+    @staticmethod
+    @firestore.transactional
+    def deduct_from_location(transaction, doc_ref, loc_id: str, qty: float, bags_removed: float = 0):
+        """Atomic deduction from a specific shelf/zone ID (Transactional Wrapper)."""
+        print(f"📉 [DEDUCTION] Attempting to remove {qty} from location {loc_id} of item {doc_ref.id}")
+        return InventoryService._execute_deduction_internal(transaction, doc_ref, loc_id, qty, bags_removed)
+
     def remove_stock_spatial(self, doc_id: str, loc_id: str, qty: float, user: dict = None, bags_removed: float = 0, skip_deduction: bool = False):
         """Wrapper to perform a safe atomic deduction or just an audit/alert check."""
         doc_ref = self.collection.document(doc_id)
@@ -443,9 +447,44 @@ class InventoryService:
             new_total = data.get('total_qty', 0)
         else:
             print(f"⚡ [DEDUCTION_MODE] Stock {doc_id} removal from location {loc_id}")
+            
+            @firestore.transactional
+            def atomic_double_deduction(transaction, primary_ref):
+                # 1. Primary Deduction (Batch or specific position)
+                res_total = self._execute_deduction_internal(transaction, primary_ref, loc_id, qty, bags_removed=bags_removed)
+                
+                # 2. Propagation to Summary (PROD-)
+                if doc_id.startswith("BATCH-"):
+                    snap = primary_ref.get(transaction=transaction)
+                    if snap.exists:
+                        p_code = snap.to_dict().get('product_code')
+                        if p_code:
+                            summary_id = f"PROD-{normalize_id(p_code)}"
+                            summary_ref = self.collection.document(summary_id)
+                            try:
+                                primary_data = snap.to_dict()
+                                target_dist = next((d for d in primary_data.get('distributions', []) if d.get('dist_id') == loc_id), {})
+                                
+                                s_snap = summary_ref.get(transaction=transaction)
+                                if s_snap.exists:
+                                    s_data = s_snap.to_dict()
+                                    s_dists = s_data.get('distributions', [])
+                                    # Find matching dist in summary
+                                    s_loc_id = None
+                                    for sd in s_dists:
+                                        if sd.get('warehouse') == target_dist.get('warehouse') and \
+                                           sd.get('location') == target_dist.get('location'):
+                                            s_loc_id = sd.get('dist_id')
+                                            break
+                                    
+                                    # Use SUMMARY_DEDUCTION as fallback if specific zone mapping fails in summary
+                                    self._execute_deduction_internal(transaction, summary_ref, s_loc_id or "SUMMARY_DEDUCTION", qty, bags_removed)
+                            except Exception as se:
+                                print(f"⚠️ Summary sync failed: {se}")
+                return res_total
+
             transaction = db.transaction()
-            # We must pass the transaction object to the internal logic
-            new_total = self.deduct_from_location(transaction, doc_ref, loc_id, qty, bags_removed=bags_removed)
+            new_total = atomic_double_deduction(transaction, doc_ref)
         
         # ── RELIABLE HYBRID SYNC ──
         try:

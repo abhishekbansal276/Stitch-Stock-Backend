@@ -1367,15 +1367,15 @@ class SheetsService:
             return {"total_in": 0, "total_out": 0, "available_balance": 0, "low_stock_count": 0}
         try:
             res = self.service.spreadsheets().values().get(
-                spreadsheetId=self.spreadsheet_id, range="Stock Summary!C:F"
+                spreadsheetId=self.spreadsheet_id, range="Stock Summary!C:G"
             ).execute()
             rows = res.get("values", [])[2:]  # Skip super-header (row 1) + column headers (row 2)
             t_in = t_out = t_bal = low = 0.0
             for row in rows:
-                if len(row) >= 4:
-                    bal  = self._to_float(row[0])
-                    tin  = self._to_float(row[2])
-                    tout = self._to_float(row[3])
+                if len(row) >= 5:
+                    bal  = self._to_float(row[0])  # Col C
+                    tin  = self._to_float(row[3])  # Col F (Total Received)
+                    tout = self._to_float(row[4])  # Col G (Total Dispatched)
                     t_in += tin; t_out += tout; t_bal += bal
                     if bal < 10:
                         low += 1
