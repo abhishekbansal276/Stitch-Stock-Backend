@@ -201,7 +201,10 @@ class SheetsService:
                     if missing:
                         print(f"SheetsService: Adding missing columns {missing} to '{title}'")
                         self._write_headers(title, schema)
-                        self._apply_full_styles(sheet_id, title, schema)
+                    
+                    # FORCE REFRESH: Ensures new three-tier formatting (Quantity 2.0, Bags 307)
+                    # is applied to existing sheets on the next data save.
+                    self._apply_full_styles(sheet_id, title, schema)
         except Exception as e:
             print(f"Error ensuring sheet '{title}': {e}")
 
