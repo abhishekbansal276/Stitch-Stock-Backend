@@ -168,6 +168,17 @@ async def create_stock(
         items = payload.get('items', [])
         user_display = user.get('full_name', user['email'])
         
+        # 0. PRE-SYNC VALIDATION: Ensure bill hasn't been entered
+        invoice_num = header.get('Invoice Number')
+        supplier = header.get('Supplier Name')
+        
+        if invoice_num:
+            print(f"🕵️ Syncing Bill #{invoice_num}... Checking for duplicates...")
+            if sheets_service.check_invoice_duplicate(invoice_num):
+                err_msg = f"Already entered: Bill #{invoice_num} from {supplier or 'Unknown'} exists in Register."
+                print(f"🛑 [SYNC-ABORTED] {err_msg}")
+                raise HTTPException(status_code=400, detail=err_msg)
+        
         # 1. BATCH MERGE: Decide identity based on 'merge_mode'
         merge_on = payload.get('merge_mode', False)
         final_merged = {}

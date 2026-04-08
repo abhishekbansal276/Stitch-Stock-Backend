@@ -933,6 +933,33 @@ class SheetsService:
 
     # ── STOCK WRITE ───────────────────────────────────────────────────────────
 
+    def check_invoice_duplicate(self, invoice_no: str) -> bool:
+        """Fast, synchronous check if an invoice number already exists in Register."""
+        if not self.service or not invoice_no: return False
+        
+        target = str(invoice_no).strip().upper()
+        if target in ["", "NB", "INV-N/A"]: return False
+        
+        try:
+            # Fetch ONLY Column C (Invoice Number) from Stock Register
+            # In BASE_SCHEMA, 'Invoice Number' is at index 2 (Col C)
+            range_name = "Stock Register!C:C"
+            res = self.service.spreadsheets().values().get(
+                spreadsheetId=self.spreadsheet_id,
+                range=range_name
+            ).execute()
+            
+            rows = res.get("values", [])
+            for row in rows:
+                if row:
+                    existing = str(row[0]).strip().upper()
+                    if existing == target:
+                        return True
+            return False
+        except Exception as e:
+            print(f"🛑 [DUP-CHECK-FAIL] Error during invoice lookup: {e}")
+            return False
+
     def save_stock_batch(self, header: Dict, items: List[Dict],
                          item_ids: List[str], user_display: str):
         """Sequential atomic ingestion of stock batch."""
@@ -959,7 +986,8 @@ class SheetsService:
                     reg_rows = batch_res[0].get("values", []) if len(batch_res) > 0 else []
                     sum_rows = batch_res[1].get("values", []) if len(batch_res) > 1 else []
 
-                    # ── 1a. DUPLICATE BILL CHECK ──────────────────────────────────────
+                    # ── 1a. DUPLICATE BILL CHECK (Safety Fallback) ────────────────────
+                    # Note: UI already does this synchronously now, but keep as sanity check
                     target_invoice = str(header.get("Invoice Number", "")).strip().upper()
                     target_supplier = str(header.get("Supplier Name", "")).strip()
                     
@@ -1085,14 +1113,30 @@ class SheetsService:
                         for col_name in self.BASE_SCHEMA:
                             idx = h[col_name]
                             if not row_data[idx]:
-                                val = item.get(col_name) or header.get(col_name)
-                                if val is not None:
-                                    if col_name in numeric_fields:
-                                        row_data[idx] = self._clean_num(val)
+                                # Handle Special Case: Taxes Concatenation
+                                if col_name == "Taxes (IGST/CGST/SGST)":
+                                    taxes = header.get("Taxes") or header.get("taxes") or []
+                                    if isinstance(taxes, list) and len(taxes) > 0:
+                                        # Multiple taxes breakdown: "100.0 (CGST), 100.0 (SGST)"
+                                        tax_strs = []
+                                        for t in taxes:
+                                            # Support both dict and model objects
+                                            lbl = t.get("label") if isinstance(t, dict) else getattr(t, "label", "Tax")
+                                            amt = t.get("amount") if isinstance(t, dict) else getattr(t, "amount", 0)
+                                            tax_strs.append(f"{amt} ({lbl})")
+                                        row_data[idx] = ", ".join(tax_strs)
                                     else:
-                                        row_data[idx] = str(val)
+                                        # Fallback to single value
+                                        row_data[idx] = self._clean_num(header.get(col_name, 0))
                                 else:
-                                    row_data[idx] = ""
+                                    val = item.get(col_name) or header.get(col_name)
+                                    if val is not None:
+                                        if col_name in numeric_fields:
+                                            row_data[idx] = self._clean_num(val)
+                                        else:
+                                            row_data[idx] = str(val)
+                                    else:
+                                        row_data[idx] = ""
                         
                         batch_new_barcodes[item_id] = len(register_appends)
                         register_appends.append(row_data)
