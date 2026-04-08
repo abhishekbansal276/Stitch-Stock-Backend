@@ -372,8 +372,9 @@ class OCRService:
             code_part = p_code if (p_code and p_code not in ["...", "NONE", "UNKNOWN"]) else p_name
             if not code_part: code_part = "UNKNOWN"
             
-            # Composite key ensures different batches stay separate
-            key = f"{code_part}|{p_batch}"
+            # Composite key ensures identical items merge, but different batches stay separate
+            # Strip and uppercase all parts for robust matching
+            key = f"{code_part.strip().upper()}|{p_batch.strip().upper()}"
 
             if key in merged:
                 base = merged[key]
@@ -455,7 +456,7 @@ class OCRService:
 GEMINI_PROMPT = """
 Extract invoice data from the image into the specified JSON format.
 Ensure 100% accuracy for financial totals and product details.
-Consolidate identical product codes by summing quantities and joining batches.
+Consolidate line items ONLY if the Product Code, Product Name, and Batch Number are exactly the same. In such cases, sum their quantities and bags. If the Batch Numbers are different, you MUST keep them as separate line items. Do NOT use comma-separated strings for Batch Numbers.
 
 COMMAND — Return the data in the following standardized JSON format:
 {
@@ -921,7 +922,7 @@ GROQ_PROMPT = """
 Extract invoice data from the image into the specified JSON format.
 Ensure 100% accuracy for financial totals and product details.
 
-**CARDINAL RULE**: NEVER consolidate or merge line items. If a product appears on multiple rows or has multiple batch numbers, you MUST create a separate JSON object for each one. Do NOT use commas in the "Batch Number" field to list multiple values.
+**CARDINAL RULE**: Consolidate line items ONLY if the Product Code, Product Name, and Batch Number are exactly the same. In such cases, sum their quantities and bags. If the Batch Numbers are different, you MUST keep them as separate line items. NEVER use commas in the "Batch Number" field to list multiple values.
 
 COMMAND — Return the data in the following standardized JSON format:
 {
