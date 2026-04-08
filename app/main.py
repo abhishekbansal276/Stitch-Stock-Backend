@@ -175,7 +175,7 @@ async def create_stock(
         if invoice_num:
             print(f"🕵️ Syncing Bill #{invoice_num}... Checking for duplicates...")
             if sheets_service.check_invoice_duplicate(invoice_num):
-                err_msg = f"Already entered: Bill #{invoice_num} from {supplier or 'Unknown'} exists in Register."
+                err_msg = f"Bill #{invoice_num} already exists in the Stock Register."
                 print(f"🛑 [SYNC-ABORTED] {err_msg}")
                 raise HTTPException(status_code=400, detail=err_msg)
         
