@@ -697,62 +697,55 @@ class SheetsService:
             }
         })
 
-        # ── 11. NUMERIC COLUMNS — right-aligned ───────────────────────────────
-        # Differentiate between Quantity (forced decimal) and others (clean integers)
+        # ── 11. NUMERIC COLUMNS ──────────────────────────────────────────────
+        # Three-tier system to prevent trailing dots
         qty_cols = {
             "Stock Register":  [7],
             "Stock Movements": [3],
             "Stock Summary":   [2, 5, 6],
         }.get(title, [])
 
-        other_numeric_cols = {
-            "Stock Register":  [9, 11, 12, 13, 14, 15, 16],
+        int_cols = {
+            "Stock Register":  [9],
             "Stock Movements": [4],
             "Stock Summary":   [3, 7, 8],
         }.get(title, [])
 
-        # QUANTITY FORMAT: Forced at least one decimal (e.g. 2.0)
+        general_numeric_cols = {
+            "Stock Register":  [11, 12, 13, 14, 15, 16],
+            "Stock Movements": [],
+            "Stock Summary":   [],
+        }.get(title, [])
+
+        # TIER 1: Quantity (Forced Decimal, e.g. 2.0)
         for col in qty_cols:
             if col < num_cols:
                 requests.append({
                     "repeatCell": {
-                        "range": {
-                            "sheetId": sheet_id,
-                            "startRowIndex": frozen_rows,
-                            "startColumnIndex": col, "endColumnIndex": col + 1,
-                        },
-                        "cell": {
-                            "userEnteredFormat": {
-                                "horizontalAlignment": "RIGHT",
-                                "numberFormat": {
-                                    "type": "NUMBER",
-                                    "pattern": "#,##0.0#",
-                                },
-                            }
-                        },
+                        "range": {"sheetId": sheet_id, "startRowIndex": frozen_rows, "startColumnIndex": col, "endColumnIndex": col+1},
+                        "cell": {"userEnteredFormat": {"horizontalAlignment": "RIGHT", "numberFormat": {"type": "NUMBER", "pattern": "#,##0.0#"}}},
                         "fields": "userEnteredFormat(horizontalAlignment,numberFormat)",
                     }
                 })
 
-        # GENERAL NUMERIC: Clean integers for bags/financials
-        for col in other_numeric_cols:
+        # TIER 2: Bags (Strict Integer, e.g. 307)
+        for col in int_cols:
             if col < num_cols:
                 requests.append({
                     "repeatCell": {
-                        "range": {
-                            "sheetId": sheet_id,
-                            "startRowIndex": frozen_rows,
-                            "startColumnIndex": col, "endColumnIndex": col + 1,
-                        },
-                        "cell": {
-                            "userEnteredFormat": {
-                                "horizontalAlignment": "RIGHT",
-                                "numberFormat": {
-                                    "type": "NUMBER",
-                                    "pattern": "#,##0.###",
-                                },
-                            }
-                        },
+                        "range": {"sheetId": sheet_id, "startRowIndex": frozen_rows, "startColumnIndex": col, "endColumnIndex": col+1},
+                        "cell": {"userEnteredFormat": {"horizontalAlignment": "RIGHT", "numberFormat": {"type": "NUMBER", "pattern": "#,##0"}}},
+                        "fields": "userEnteredFormat(horizontalAlignment,numberFormat)",
+                    }
+                })
+
+        # TIER 3: General (Precise but No Trailing Dots, e.g. 125,120)
+        for col in general_numeric_cols:
+            if col < num_cols:
+                requests.append({
+                    "repeatCell": {
+                        "range": {"sheetId": sheet_id, "startRowIndex": frozen_rows, "startColumnIndex": col, "endColumnIndex": col+1},
+                        "cell": {"userEnteredFormat": {"horizontalAlignment": "RIGHT", "numberFormat": {"type": "NUMBER", "pattern": "#,##0.####"}}},
                         "fields": "userEnteredFormat(horizontalAlignment,numberFormat)",
                     }
                 })
