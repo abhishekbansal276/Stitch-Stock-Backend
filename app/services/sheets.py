@@ -1171,8 +1171,12 @@ class SheetsService:
                         ratio = (qty / bags) if bags > 0 else 1.0
                         
                         for d in dists:
-                            val = self._to_float(d.get('qty', 0))
-                            if val < 0.001: continue
+                            raw_val = d.get('qty', 0)
+                            val = self._to_float(raw_val)
+                            
+                            # Allow "N/A" to be recorded, but skip purely numeric 0.0 values
+                            if str(raw_val).strip().upper() != "N/A" and val < 0.001: 
+                                continue
                             
                             u_type = d.get('unit_type', 'qty')
                             if u_type == 'bags':
