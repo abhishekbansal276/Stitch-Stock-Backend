@@ -487,8 +487,15 @@ class InventoryService:
         old_bag_low = (old_bags < min_bag) if min_bag > 0 else True
         was_low = (old_qty_low and old_bag_low) if (min_level > 0 and min_bag > 0) else (old_qty_low if min_level > 0 else old_bag_low)
 
+        # Detailed Logging for Debugging
+        print(f"🔔 [ALERT-LOG] Checking: {data['product_name']} ({data['product_code']})")
+        print(f"   Levels: MinQty={min_level}, MinBag={min_bag}, Unit={unit}, QtyNA={is_qty_na}")
+        print(f"   Stock: Qty({old_total} -> {new_total}), Bags({old_bags} -> {new_bags})")
+        print(f"   Flags: is_now_low={is_now_low}, was_low={was_low}")
+
         # Alert only if transitioned from Healthy -> Low
         if is_now_low and not was_low:
+             print(f"🚀 [ALERT-TRIGGER] Stock crossed threshold! Sending mail...")
              email_service.send_low_stock_alert(
                 data['product_name'], 
                 data['product_code'], 
@@ -496,6 +503,10 @@ class InventoryService:
                 min_level, 
                 unit
             )
+        elif is_now_low and was_low:
+             print(f"⏭️ [ALERT-SKIP] Stock already low before this deduction. No spam.")
+        else:
+             print(f"✅ [ALERT-OK] Stock remains healthy.")
 
         transaction.update(doc_ref, {
             'distributions': new_distributions,
