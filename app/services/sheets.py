@@ -1396,6 +1396,18 @@ class SheetsService:
         if not self.service:
             return {"total_in": 0, "total_out": 0, "available_balance": 0, "low_stock_count": 0, "total_in_bags": 0, "total_out_bags": 0, "available_balance_bags": 0}
         try:
+            # 1. Fetch Dynamic Thresholds from Firestore
+            min_qty = 10.0
+            min_bag = 0.0
+            try:
+                g_doc = db.collection('alert_config').document('settings').get()
+                if g_doc.exists:
+                    conf = g_doc.to_dict()
+                    min_qty = float(conf.get('default_min_stock', 10.0))
+                    min_bag = float(conf.get('default_min_bag', 0.0))
+            except Exception as e:
+                print(f"⚠️ [SUMMARY_STATS] Firestore Threshold Load Error: {e}")
+
             res = self.service.spreadsheets().values().get(
                 spreadsheetId=self.spreadsheet_id, range="Stock Summary!C:I"
             ).execute()
@@ -1417,7 +1429,8 @@ class SheetsService:
                     t_in += tin; t_out += tout; t_bal += bal
                     t_in_b += tin_b; t_out_b += tout_b; t_bal_b += bags
                     
-                    if bal < 10:
+                    # Live Pulse Low Stock Logic: Both Unit and Bag threshold check
+                    if bal < min_qty and bags < min_bag:
                         low += 1
             
             return {
@@ -1571,6 +1584,7 @@ class SheetsService:
             data = rows[2:] if len(rows) > 2 else []  # Skip super-header (row 1) + column headers (row 2)
             
             found_idx = -1
+            matched_row = []
             code_to_find = normalize_id(code)
             
             for i, row in enumerate(data):
@@ -1578,6 +1592,7 @@ class SheetsService:
                     current_code = normalize_id(row[1])
                     if current_code == code_to_find:
                         found_idx = i + 3  # +3: 1-based index + 2 skipped header rows
+                        matched_row = row
                         break
             
             now = self._get_now_ist()
@@ -1595,7 +1610,7 @@ class SheetsService:
                 ]
                 self._append_row("Stock Summary", new_row)
             else:
-                curr_row = data[found_idx - 2]
+                curr_row = matched_row
                 curr_bal = self._to_float(curr_row[2]) if len(curr_row) > 2 else 0.0
                 curr_bags = self._to_float(curr_row[3]) if len(curr_row) > 3 else 0.0
                 curr_in_qty = self._to_float(curr_row[5]) if len(curr_row) > 5 else 0.0

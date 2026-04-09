@@ -354,24 +354,24 @@ class InventoryService:
         data = snapshot.to_dict()
         new_total = float(data.get('total_qty', 0))
         
-        # 1. Get Product Custom Level
+        # 1. Get Product Custom Levels
         min_level = float(data.get('min_stock_level') or 0)
+        min_bag = 0.0 # Future: support per-item bag threshold
         
-        # 2. Get Global Default Fallback
-        if min_level <= 0:
-            try:
-                g_doc = db.collection('alert_config').document('settings').get()
-                if g_doc.exists:
-                    min_level = float(g_doc.to_dict().get('default_min_stock', 0))
-            except:
-                min_level = 0
+        # 2. Get Global Default Fallbacks
+        try:
+            g_doc = db.collection('alert_config').document('settings').get()
+            if g_doc.exists:
+                conf = g_doc.to_dict()
+                if min_level <= 0:
+                    min_level = float(conf.get('default_min_stock', 0))
+                min_bag = float(conf.get('default_min_bag', 0))
+        except:
+            pass
                 
-        # For 'check only' mode, we might want a 'last_alert_qty' or similar 
-        # to avoid double emails if the sync API is called multiple times.
-        if min_level > 0 and new_total <= min_level:
-            # We check a 'last_notified_at' or just look at the timestamp of the last movement
-            # In 'Sync' mode, we usually assume the frontend already did the movement.
-            # We'll rely on the email service to avoid spam if possible or just log it.
+        # Dual-metric threshold check: Alert only if below BOTH levels
+        total_bags = float(data.get('number_of_bags', 0))
+        if min_level > 0 and new_total <= min_level and total_bags <= min_bag:
             email_service.send_low_stock_alert(
                 data['product_name'], 
                 data['product_code'], 
@@ -436,22 +436,29 @@ class InventoryService:
         
         # ── Check for Low Stock Alert ──
         min_level = float(data.get('min_stock_level') or 0)
-        if min_level <= 0:
-            try:
-                g_doc = db.collection('alert_config').document('settings').get()
-                if g_doc.exists:
-                    min_level = float(g_doc.to_dict().get('default_min_stock', 0))
-            except:
-                min_level = 0
+        min_bag = 0.0
+        try:
+            g_doc = db.collection('alert_config').document('settings').get()
+            if g_doc.exists:
+                conf = g_doc.to_dict()
+                if min_level <= 0:
+                    min_level = float(conf.get('default_min_stock', 0))
+                min_bag = float(conf.get('default_min_bag', 0))
+        except:
+            pass
                 
-        if min_level > 0 and new_total <= min_level and old_total > min_level:
-            email_service.send_low_stock_alert(
-                data['product_name'], 
-                data['product_code'], 
-                new_total, 
-                min_level, 
-                data['unit']
-            )
+        # Alert if falling below BOTH thresholds
+        if min_level > 0 and new_total <= min_level and new_bags <= min_bag:
+            # Only alert if it was PREVIOUSLY above threshold (to avoid spam on every deduction)
+            old_bags = float(data.get('number_of_bags', 0))
+            if old_total > min_level or old_bags > min_bag:
+                email_service.send_low_stock_alert(
+                    data['product_name'], 
+                    data['product_code'], 
+                    new_total, 
+                    min_level, 
+                    data['unit']
+                )
 
         transaction.update(doc_ref, {
             'distributions': new_distributions,
