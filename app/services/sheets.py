@@ -115,6 +115,13 @@ class SheetsService:
         0: 220, 1: 130, 2: 130, 3: 110, 4: 80, 5: 130, 6: 130, 7: 130, 8: 130, 9: 160,
     }
 
+    # Identify which columns should be right-aligned (numbers, rates, totals)
+    NUMERIC_COLS_MAP = {
+        "Stock Register": [7, 9, 11, 12, 13, 14, 15, 16],
+        "Stock Movements": [3, 5],
+        "Stock Summary": [3, 5, 6],
+    }
+
     SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
 
     def __init__(self):
@@ -425,6 +432,26 @@ class SheetsService:
                 "fields": "userEnteredFormat(textFormat,verticalAlignment,wrapStrategy,padding)",
             }
         })
+
+        # ── 4.1 NUMERIC ALIGNMENT — Force Right for specific columns ──────────
+        numeric_cols = self.NUMERIC_COLS_MAP.get(title, [])
+        for col_idx in numeric_cols:
+            if col_idx < num_cols:
+                requests.append({
+                    "repeatCell": {
+                        "range": {
+                            "sheetId": sheet_id,
+                            "startRowIndex": frozen_rows,
+                            "startColumnIndex": col_idx, "endColumnIndex": col_idx + 1,
+                        },
+                        "cell": {
+                            "userEnteredFormat": {
+                                "horizontalAlignment": "RIGHT",
+                            }
+                        },
+                        "fields": "userEnteredFormat.horizontalAlignment",
+                    }
+                })
 
         # ── 5. DATA ROW HEIGHT ────────────────────────────────────────────────
         requests.append({
