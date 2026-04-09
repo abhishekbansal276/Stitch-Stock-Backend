@@ -127,6 +127,11 @@ class InventoryService:
         # ── 3. FINAL AUDIT & CONSOLIDATION: Merge distribution duplicates ──
         consolidated = {}
         for d in merged_dists:
+            # [FIX] Enforcement: If unit is bags, qty and bags MUST be the same.
+            # We use bags as the authority for bag-items to resolve any divergence.
+            if 'bag' in str(d.get('unit_type', '')).lower():
+                d['qty'] = safe_int(d.get('bags', 0))
+
             # Identity key: Warehouse + Location + Batch
             key = f"{normalize_id(d.get('warehouse', 'WH'))}-{normalize_id(d.get('location', 'LOC'))}-{normalize_id(d.get('batch_number', 'NB'))}"
             
@@ -138,8 +143,10 @@ class InventoryService:
         
         merged_dists = list(consolidated.values())
 
-        # Final audit for missing batch numbers
+        # Final audit for missing batch numbers and final bag-sync check after consolidation
         for d in merged_dists:
+            if 'bag' in str(d.get('unit_type', '')).lower():
+                d['qty'] = safe_int(d.get('bags', 0))
             if not d.get('batch_number') or str(d['batch_number']).strip() == "":
                 d['batch_number'] = batch_number or 'NB'
 
@@ -692,17 +699,21 @@ class InventoryService:
                 unit_str = str(dist.get('unit_type', 'PCS')).lower()
                 is_bag_item = 'bag' in unit_str
                 
-                # Qty Logic: Preserve N/A string if original was N/A
+                    # Qty Logic: Preserve N/A string if original was N/A
                 s_qty_val = dist.get('qty', 0)
                 if str(s_qty_val).strip() == "N/A":
                     dist['qty'] = "N/A"
                 else:
                     curr_qty = float(s_qty_val)
-                    # For bag items, if qty displacement is 0 or missing, use bags_to_move
-                    adj_qty = qty
-                    if is_bag_item and adj_qty <= 0:
+                    curr_bags = float(dist.get('bags', 0))
+
+                    # [FIX] Force 1:1 sync for bag items to resolve divergence
+                    if is_bag_item:
+                        if curr_qty != curr_bags:
+                             print(f"🛠️ [SELF-HEAL] Harmonizing bag/qty divergence: {curr_qty} -> {curr_bags}")
+                             curr_qty = curr_bags
                         adj_qty = bags_to_move
-                    
+                        
                     if adj_qty > 0 and curr_qty < adj_qty - 0.001:
                         raise Exception(f"Insufficient stock in source position (Has {curr_qty}, Needs {adj_qty}).")
                     dist['qty'] = curr_qty - adj_qty
@@ -732,8 +743,14 @@ class InventoryService:
                 else:
                     d_adj_qty = qty
                     d_unit_type = str(dist.get('unit_type', 'PCS')).lower()
-                    if 'bag' in d_unit_type and d_adj_qty <= 0:
+                    d_bags_val = float(dist.get('bags', 0))
+                    
+                    # [FIX] Force 1:1 sync for bag items 
+                    if 'bag' in d_unit_type:
+                        if float(d_qty_val) != d_bags_val:
+                            d_qty_val = d_bags_val
                         d_adj_qty = bags_to_move
+
                     dist['qty'] = float(d_qty_val) + d_adj_qty
                 
                 # Handle Bags logic for destination
