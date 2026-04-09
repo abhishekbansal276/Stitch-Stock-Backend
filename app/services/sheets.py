@@ -1200,15 +1200,25 @@ class SheetsService:
                     code_key = normalize_id(raw_code)
                     if not code_key: continue
                     
-                    i_qty = self._to_float(item.get("Quantity Received") or item.get("qty") or 0)
-                    i_bags = self._to_float(item.get("Number of Bags") or item.get("bags") or 0)
+                    # Store raw values to preserve "N/A"
+                    raw_qty = item.get("Quantity Received") or item.get("qty") or 0
+                    raw_bags = item.get("Number of Bags") or item.get("bags") or 0
+                    
                     i_name = item.get("Product Name") or item.get("name") or "Item"
                     i_unit = item.get("Unit") or item.get("unit") or "PCS"
                     
                     if code_key not in session_summary_map:
-                        session_summary_map[code_key] = {"name": i_name, "code": raw_code, "qty": 0.0, "bags": 0.0, "unit": i_unit}
-                    session_summary_map[code_key]["qty"] += i_qty
-                    session_summary_map[code_key]["bags"] += i_bags
+                        session_summary_map[code_key] = {"name": i_name, "code": raw_code, "qty": raw_qty, "bags": raw_bags, "unit": i_unit}
+                    else:
+                        target = session_summary_map[code_key]
+                        # Aggregate Qty
+                        if str(raw_qty).upper() == "N/A": target["qty"] = "N/A"
+                        elif target["qty"] != "N/A": 
+                            target["qty"] = self._to_float(target["qty"]) + self._to_float(raw_qty)
+                        # Aggregate Bags
+                        if str(raw_bags).upper() == "N/A": target["bags"] = "N/A"
+                        elif target["bags"] != "N/A": 
+                            target["bags"] = self._to_float(target["bags"]) + self._to_float(raw_bags)
 
                 for code_key, session_data in session_summary_map.items():
                     qty = session_data["qty"]
@@ -1219,24 +1229,35 @@ class SheetsService:
 
                     s_entry = summary_data_map.get(code_key)
                     if s_entry:
-                        s_entry["balance"] += qty
-                        s_entry["bags_balance"] += bags
-                        s_entry["received"] += qty
-                        s_entry["bags_received"] += bags
+                        # Update Balance (Float or N/A)
+                        if str(qty).upper() == "N/A": s_entry["balance"] = "N/A"
+                        elif s_entry["balance"] != "N/A": s_entry["balance"] += self._to_float(qty)
                         
+                        # Update Bags Balance
+                        if str(bags).upper() == "N/A": s_entry["bags_balance"] = "N/A"
+                        elif s_entry["bags_balance"] != "N/A": s_entry["bags_balance"] += self._to_float(bags)
+                        
+                        # Update Received Total
+                        if str(qty).upper() == "N/A": s_entry["received"] = "N/A"
+                        elif s_entry["received"] != "N/A": s_entry["received"] += self._to_float(qty)
+                        
+                        # Update Bags Received Total
+                        if str(bags).upper() == "N/A": s_entry["bags_received"] = "N/A"
+                        elif s_entry["bags_received"] != "N/A": s_entry["bags_received"] += self._to_float(bags)
+
                         updates_batch.append({
                             "range": f"Stock Summary!C{s_entry['row']}:J{s_entry['row']}",
                             "values": [[
-                                self._clean_num(s_entry["balance"]), int(round(s_entry["bags_balance"])), unit,
+                                self._clean_num(s_entry["balance"]), self._clean_num(s_entry["bags_balance"]), unit,
                                 self._clean_num(s_entry["received"]), self._clean_num(s_entry["dispatched"]),
-                                int(round(s_entry["bags_received"])), int(round(s_entry["bags_dispatched"])),
+                                self._clean_num(s_entry["bags_received"]), self._clean_num(s_entry["bags_dispatched"]),
                                 now.strftime("%Y-%m-%d %H:%M:%S")
                             ]]
                         })
                     else:
                         summary_appends.append([
-                            name, code, self._clean_num(qty), int(round(bags)), unit, 
-                            self._clean_num(qty), 0, int(round(bags)), 0, 
+                            name, code, self._clean_num(qty), self._clean_num(bags), unit, 
+                            self._clean_num(qty), 0, self._clean_num(bags), 0, 
                             now.strftime("%Y-%m-%d %H:%M:%S")
                         ])
                         summary_data_map[code_key] = {"row": 9999}
@@ -1421,8 +1442,10 @@ class SheetsService:
             
             for row in rows:
                 if len(row) >= 5:
-                    bal  = self._to_float(row[0])  # Col C (Current Balance)
-                    bags = self._to_float(row[1])  # Col D (Current Bags)
+                    bal_val = row[0]
+                    bag_val = row[1]
+                    bal  = self._to_float(bal_val)  # Col C (Current Balance)
+                    bags = self._to_float(bag_val)  # Col D (Current Bags)
                     tin  = self._to_float(row[3])  # Col F (Total Received)
                     tout = self._to_float(row[4])  # Col G (Total Dispatched)
                     
@@ -1434,8 +1457,19 @@ class SheetsService:
                     t_in_b += tin_b; t_out_b += tout_b; t_bal_b += bags
                     
                     # Live Pulse Low Stock Logic: Both Unit and Bag threshold check
-                    if bal < min_qty and bags < min_bag:
-                        low += 1
+                    # If a metric is 'N/A', we treat it as 'Threshold Passed' (True)
+                    # so that the alert depends solely on the remaining valid metric.
+                    is_bal_low = True if str(bal_val).strip().upper() == "N/A" else (bal < min_qty)
+                    is_bag_low = True if str(bag_val).strip().upper() == "N/A" else (bags < min_bag)
+
+                    # Only count as low stock if BOTH (valid) metrics are below threshold
+                    # If thresholds are disabled (0), we ignore that dimension.
+                    if min_qty > 0 and min_bag > 0:
+                        if is_bal_low and is_bag_low: low += 1
+                    elif min_qty > 0:
+                        if is_bal_low: low += 1
+                    elif min_bag > 0:
+                        if is_bag_low: low += 1
             
             return {
                 "total_in": t_in, "total_out": t_out, "available_balance": t_bal,
@@ -1607,34 +1641,49 @@ class SheetsService:
 
                 # Add new summary row (Only for IN)
                 new_row = [
-                    name, code, qty_delta, bags_delta, "PCS", 
-                    qty_delta, 0.0,  # Total Qty Rec, Total Qty Disp
-                    bags_delta, 0.0, # Total Bags Rec, Total Bags Disp
+                    name, code, 
+                    self._clean_num(qty_delta), self._clean_num(bags_delta), "PCS", 
+                    self._clean_num(qty_delta), 0.0, 
+                    self._clean_num(bags_delta), 0.0,
                     now.strftime("%Y-%m-%d %H:%M:%S")
                 ]
                 self._append_row("Stock Summary", new_row)
             else:
                 curr_row = matched_row
-                curr_bal = self._to_float(curr_row[2]) if len(curr_row) > 2 else 0.0
-                curr_bags = self._to_float(curr_row[3]) if len(curr_row) > 3 else 0.0
+                raw_bal = curr_row[2] if len(curr_row) > 2 else 0.0
+                raw_bags = curr_row[3] if len(curr_row) > 3 else 0.0
+                
+                curr_bal = self._to_float(raw_bal)
+                curr_bags = self._to_float(raw_bags)
                 curr_in_qty = self._to_float(curr_row[5]) if len(curr_row) > 5 else 0.0
                 curr_out_qty = self._to_float(curr_row[6]) if len(curr_row) > 6 else 0.0
                 curr_in_bags = self._to_float(curr_row[7]) if len(curr_row) > 7 else 0.0
                 curr_out_bags = self._to_float(curr_row[8]) if len(curr_row) > 8 else 0.0
-                
-                new_bal  = max(0.0, round(curr_bal + qty_delta, 4))
-                new_bags = max(0, int(round(curr_bags + bags_delta)))
-                new_in_qty = round(curr_in_qty + (max(0, qty_delta) if m_type == "IN" else 0.0), 4)
-                new_out_qty = round(curr_out_qty + (abs(min(0, qty_delta)) if m_type == "OUT" else 0.0), 4)
-                new_in_bags = int(curr_in_bags + (max(0, bags_delta) if m_type == "IN" else 0.0))
-                new_out_bags = int(curr_out_bags + (abs(min(0, bags_delta)) if m_type == "OUT" else 0.0))
+
+                # N/A Aware Logic
+                is_na_qty = (str(raw_bal).upper() == "N/A") or (str(qty_delta).upper() == "N/A")
+                is_na_bags = (str(raw_bags).upper() == "N/A") or (str(bags_delta).upper() == "N/A")
+
+                if is_na_qty:
+                    new_bal = "N/A"; new_in_qty = "N/A" if m_type == "IN" else curr_in_qty; new_out_qty = "N/A" if m_type == "OUT" else curr_out_qty
+                else:
+                    new_bal = max(0.0, round(curr_bal + qty_delta, 4))
+                    new_in_qty = round(curr_in_qty + (max(0, qty_delta) if m_type == "IN" else 0.0), 4)
+                    new_out_qty = round(curr_out_qty + (abs(min(0, qty_delta)) if m_type == "OUT" else 0.0), 4)
+
+                if is_na_bags:
+                    new_bags = "N/A"; new_in_bags = "N/A" if m_type == "IN" else curr_in_bags; new_out_bags = "N/A" if m_type == "OUT" else curr_out_bags
+                else:
+                    new_bags = max(0, int(round(curr_bags + bags_delta)))
+                    new_in_bags = int(curr_in_bags + (max(0, bags_delta) if m_type == "IN" else 0.0))
+                    new_out_bags = int(curr_out_bags + (abs(min(0, bags_delta)) if m_type == "OUT" else 0.0))
                 
                 update_range = f"Stock Summary!C{found_idx}:J{found_idx}"
                 row_vals = [
-                    self._clean_num(new_bal), int(round(new_bags)),
+                    self._clean_num(new_bal), self._clean_num(new_bags),
                     curr_row[4] if len(curr_row) > 4 else "PCS",
                     self._clean_num(new_in_qty), self._clean_num(new_out_qty),
-                    int(round(new_in_bags)), int(round(new_out_bags)),
+                    self._clean_num(new_in_bags), self._clean_num(new_out_bags),
                     now.strftime("%Y-%m-%d %H:%M:%S")
                 ]
                 self.service.spreadsheets().values().update(

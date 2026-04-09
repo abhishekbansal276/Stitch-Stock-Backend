@@ -371,13 +371,40 @@ class InventoryService:
                 
         # Dual-metric threshold check: Alert only if below BOTH levels
         total_bags = float(data.get('number_of_bags', 0))
-        if min_level > 0 and new_total <= min_level and total_bags <= min_bag:
+        unit = data.get('unit', 'Unit')
+        
+        # If a metric is 'N/A', we treat it as 'Threshold Passed' (True)
+        is_qty_low = True if str(unit).upper() == "N/A" else (new_total < min_level)
+        is_bag_low = False # Assume bags are secondary unless storage_type is BAG or bags > 0
+        if total_bags > 0 or data.get('storage_type') == 'BAG':
+             is_bag_low = (total_bags < min_bag) if min_bag > 0 else False
+        else:
+             is_bag_low = True # Ignore bags if they aren't used
+
+        # Alert if BOTH relevant metrics are below threshold
+        if (min_level > 0 and is_qty_low) and (min_bag > 0 and is_bag_low):
             email_service.send_low_stock_alert(
                 data['product_name'], 
                 data['product_code'], 
                 new_total, 
                 min_level, 
-                data['unit']
+                unit
+            )
+        elif min_level > 0 and min_bag == 0 and is_qty_low:
+            email_service.send_low_stock_alert(
+                data['product_name'], 
+                data['product_code'], 
+                new_total, 
+                min_level, 
+                unit
+            )
+        elif min_bag > 0 and min_level == 0 and is_bag_low:
+             email_service.send_low_stock_alert(
+                data['product_name'], 
+                data['product_code'], 
+                new_total, 
+                min_level, 
+                unit
             )
 
     @staticmethod
@@ -385,7 +412,6 @@ class InventoryService:
     def deduct_from_location(transaction, doc_ref, loc_id: str, qty: float, bags_removed: float = 0):
         """Atomic deduction from a specific shelf/zone ID."""
         print(f"📉 [DEDUCTION] Attempting to remove {qty} from location {loc_id} of item {doc_ref.id}")
-        """Atomic deduction from a specific shelf/zone ID."""
         snapshot = doc_ref.get(transaction=transaction)
         if not snapshot.exists:
             raise Exception("Stock position not found in Firestore")
@@ -447,18 +473,29 @@ class InventoryService:
         except:
             pass
                 
-        # Alert if falling below BOTH thresholds
-        if min_level > 0 and new_total <= min_level and new_bags <= min_bag:
-            # Only alert if it was PREVIOUSLY above threshold (to avoid spam on every deduction)
-            old_bags = float(data.get('number_of_bags', 0))
-            if old_total > min_level or old_bags > min_bag:
-                email_service.send_low_stock_alert(
-                    data['product_name'], 
-                    data['product_code'], 
-                    new_total, 
-                    min_level, 
-                    data['unit']
-                )
+        # ── Check for Low Stock Alert (N/A-Aware Transitions) ──
+        unit = data.get('unit', 'Unit')
+        is_qty_na = str(unit).upper() == "N/A"
+        
+        # Current State
+        is_qty_low = True if is_qty_na else (new_total < min_level)
+        is_bag_low = (new_bags < min_bag) if min_bag > 0 else True
+        is_now_low = (is_qty_low and is_bag_low) if (min_level > 0 and min_bag > 0) else (is_qty_low if min_level > 0 else is_bag_low)
+
+        # Previous State (for transition detection)
+        old_qty_low = True if is_qty_na else (old_total < min_level)
+        old_bag_low = (old_bags < min_bag) if min_bag > 0 else True
+        was_low = (old_qty_low and old_bag_low) if (min_level > 0 and min_bag > 0) else (old_qty_low if min_level > 0 else old_bag_low)
+
+        # Alert only if transitioned from Healthy -> Low
+        if is_now_low and not was_low:
+             email_service.send_low_stock_alert(
+                data['product_name'], 
+                data['product_code'], 
+                new_total, 
+                min_level, 
+                unit
+            )
 
         transaction.update(doc_ref, {
             'distributions': new_distributions,
