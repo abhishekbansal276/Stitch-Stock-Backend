@@ -1394,26 +1394,41 @@ class SheetsService:
 
     def get_summary_stats(self, period: str = "all") -> Dict:
         if not self.service:
-            return {"total_in": 0, "total_out": 0, "available_balance": 0, "low_stock_count": 0}
+            return {"total_in": 0, "total_out": 0, "available_balance": 0, "low_stock_count": 0, "total_in_bags": 0, "total_out_bags": 0, "available_balance_bags": 0}
         try:
             res = self.service.spreadsheets().values().get(
-                spreadsheetId=self.spreadsheet_id, range="Stock Summary!C:G"
+                spreadsheetId=self.spreadsheet_id, range="Stock Summary!C:I"
             ).execute()
             rows = res.get("values", [])[2:]  # Skip super-header (row 1) + column headers (row 2)
             t_in = t_out = t_bal = low = 0.0
+            t_in_b = t_out_b = t_bal_b = 0.0
+            
             for row in rows:
                 if len(row) >= 5:
-                    bal  = self._to_float(row[0])  # Col C
+                    bal  = self._to_float(row[0])  # Col C (Current Balance)
+                    bags = self._to_float(row[1])  # Col D (Current Bags)
                     tin  = self._to_float(row[3])  # Col F (Total Received)
                     tout = self._to_float(row[4])  # Col G (Total Dispatched)
+                    
+                    # Optional: Total Bags Received/Dispatched (H/I)
+                    tin_b  = self._to_float(row[5]) if len(row) > 5 else 0.0
+                    tout_b = self._to_float(row[6]) if len(row) > 6 else 0.0
+                    
                     t_in += tin; t_out += tout; t_bal += bal
+                    t_in_b += tin_b; t_out_b += tout_b; t_bal_b += bags
+                    
                     if bal < 10:
                         low += 1
-            return {"total_in": t_in, "total_out": t_out,
-                    "available_balance": t_bal, "low_stock_count": int(low)}
+            
+            return {
+                "total_in": t_in, "total_out": t_out, "available_balance": t_bal,
+                "total_in_bags": int(t_in_b), "total_out_bags": int(t_out_b), 
+                "available_balance_bags": int(t_bal_b),
+                "low_stock_count": int(low)
+            }
         except Exception as e:
             print(f"Get summary stats error: {e}")
-            return {"total_in": 0, "total_out": 0, "available_balance": 0, "low_stock_count": 0}
+            return {"total_in": 0, "total_out": 0, "available_balance": 0, "low_stock_count": 0, "total_in_bags": 0, "total_out_bags": 0, "available_balance_bags": 0}
 
     def get_graph_data(self) -> Dict:
         if not self.service:
