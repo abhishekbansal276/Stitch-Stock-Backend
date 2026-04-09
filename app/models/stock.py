@@ -29,6 +29,7 @@ class StockTransferRequest(BaseModel):
     from_location_name: str
     to_location: str # loc_id
     to_location_name: str
+    to_warehouse_id: str = "N/A" # [NEW]
     quantity: float
     bags: float = 0 # Explicit bags for N/A items
     from_warehouse_name: str = "N/A"

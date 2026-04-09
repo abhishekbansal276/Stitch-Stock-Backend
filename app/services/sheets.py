@@ -1663,7 +1663,7 @@ class SheetsService:
                           from_location: str = "", to_location: str = "", 
                           from_warehouse: str = "N/A", to_warehouse: str = "N/A",
                           user_display: str = "System", product_name: str = "Generic Item",
-                          dist_id: str = "default"):
+                          dist_id: str = "default", warehouse_id: str = "N/A"):
         """Records an internal transfer in the movements ledger."""
         if not self.service: return
         
@@ -1690,7 +1690,7 @@ class SheetsService:
                     barcode_id, 
                     f"REL-{uuid.uuid4().hex[:4].upper()}", 
                     dist_id, 
-                    "N/A" # Warehouse ID
+                    warehouse_id # [UPDATED]
                 ]
                 self._append_row("Stock Movements", movement_row)
                 print(f"✅ Sheets Sync: Recorded Relocation of {qty} {product_name} ({location_path})")

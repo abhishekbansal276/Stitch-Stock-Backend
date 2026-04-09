@@ -758,7 +758,8 @@ async def transfer_stock_position(req: StockTransferRequest, user: dict = Depend
                 to_warehouse=req.to_warehouse_name,
                 user_display=user_display,
                 product_name=f_item.get('product_name', 'Stock Item'),
-                dist_id=req.from_location
+                dist_id=req.from_location,
+                warehouse_id=req.to_warehouse_id
             )
         except Exception as e:
             print(f"📡 [TRANSFER_SHEETS_ERROR] Failed to sync relocation to Sheets: {e}")
