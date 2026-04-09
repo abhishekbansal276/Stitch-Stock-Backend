@@ -1634,6 +1634,7 @@ class SheetsService:
 
     def record_relocation(self, barcode_id: str, qty: any, bags: any = 0, 
                           from_location: str = "", to_location: str = "", 
+                          from_warehouse: str = "N/A", to_warehouse: str = "N/A",
                           user_display: str = "System", product_name: str = "Generic Item",
                           dist_id: str = "default"):
         """Records an internal transfer in the movements ledger."""
@@ -1643,13 +1644,19 @@ class SheetsService:
             try:
                 location_path = f"{from_location} ➔ {to_location}"
                 
+                # Format Warehouse column: "Old ➔ New" if different, else just "Name"
+                if from_warehouse != to_warehouse and from_warehouse != "N/A" and to_warehouse != "N/A":
+                    warehouse_path = f"{from_warehouse} ➔ {to_warehouse}"
+                else:
+                    warehouse_path = to_warehouse if to_warehouse != "N/A" else from_warehouse
+
                 movement_row = [
                     self._get_now_ist().strftime("%Y-%m-%d %H:%M:%S"), 
                     product_name, 
                     "RELOCATE", 
                     self._clean_num(qty), 
                     self._clean_num(bags), 
-                    "", # Warehouse
+                    warehouse_path, # [UPDATED]
                     location_path, 
                     user_display,
                     f"MOV-{int(time.time())}", 

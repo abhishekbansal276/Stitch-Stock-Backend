@@ -31,4 +31,6 @@ class StockTransferRequest(BaseModel):
     to_location_name: str
     quantity: float
     bags: float = 0 # Explicit bags for N/A items
+    from_warehouse_name: str = "N/A"
+    to_warehouse_name: str = "N/A"
     reason: Optional[str] = "Spatial Relocation"
