@@ -688,15 +688,23 @@ class InventoryService:
             if dist.get('dist_id') == from_dist_id:
                 source_dist = dist # Track for new dist creation fallback
                 
+                # Determine if it's a bag-based item
+                is_bag_item = str(dist.get('unit_type', 'PCS')).lower().contains('bag')
+                
                 # Qty Logic: Preserve N/A string if original was N/A
                 s_qty_val = dist.get('qty', 0)
                 if str(s_qty_val).strip() == "N/A":
                     dist['qty'] = "N/A"
                 else:
                     curr_qty = float(s_qty_val)
-                    if qty > 0 and curr_qty < qty - 0.001:
-                        raise Exception(f"Insufficient stock in source position (Has {curr_qty}, Needs {qty}).")
-                    dist['qty'] = curr_qty - qty
+                    # For bag items, if qty displacement is 0 or missing, use bags_to_move
+                    adj_qty = qty
+                    if is_bag_item and adj_qty <= 0:
+                        adj_qty = bags_to_move
+                    
+                    if adj_qty > 0 and curr_qty < adj_qty - 0.001:
+                        raise Exception(f"Insufficient stock in source position (Has {curr_qty}, Needs {adj_qty}).")
+                    dist['qty'] = curr_qty - adj_qty
                 
                 # Bags Logic: Preserve N/A string
                 s_bags_val = dist.get('bags', 0)
@@ -704,6 +712,10 @@ class InventoryService:
                     dist['bags'] = "N/A"
                 else:
                     curr_bags = float(s_bags_val)
+                    # SELF-HEALING: If it's a bag item but bags field is 0 while qty exists, use qty as bags
+                    if is_bag_item and curr_bags == 0 and s_qty_val != "N/A" and float(s_qty_val) > 0:
+                        curr_bags = float(s_qty_val)
+
                     if bags_to_move > 0 and curr_bags < bags_to_move - 0.001:
                         bags_to_move = curr_bags
                     dist['bags'] = max(0, curr_bags - bags_to_move)
@@ -717,7 +729,10 @@ class InventoryService:
                 if str(d_qty_val).strip() == "N/A":
                     dist['qty'] = "N/A"
                 else:
-                    dist['qty'] = float(d_qty_val) + qty
+                    d_adj_qty = qty
+                    if str(dist.get('unit_type', 'PCS')).lower().contains('bag') and d_adj_qty <= 0:
+                        d_adj_qty = bags_to_move
+                    dist['qty'] = float(d_qty_val) + d_adj_qty
                 
                 # Handle Bags logic for destination
                 d_bags_val = dist.get('bags', 0)
