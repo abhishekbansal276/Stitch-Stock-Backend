@@ -480,13 +480,13 @@ class InventoryService:
             raise Exception(f"Position ID {loc_id} not found for this item.")
             
         old_total = float(data.get('total_qty', 0))
+        old_bags = float(data.get('number_of_bags', 0)) if not is_item_bag_based else old_total
         new_total = float(max(0, old_total - qty))
         
         # Calculate new bags total
         if is_item_bag_based:
             new_bags = new_total
         else:
-            old_bags = float(data.get('number_of_bags', 0))
             new_bags = float(max(0, old_bags - bags_removed))
         
         # Update searchable locations index
