@@ -796,6 +796,7 @@ async def transfer_stock_position(req: StockTransferRequest, user: dict = Depend
                 'qty': req.quantity,
                 'bags': bags_to_move,
                 'unit': f_item.get('unit', 'QTY'),
+                'unit_type': from_dist.get('unit_type') if from_dist else f_item.get('unit', 'QTY'),
                 'actor_name': user_display,
                 'created_at': int(time.time()),
                 'type': 'RELOCATE'
