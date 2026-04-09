@@ -18,10 +18,13 @@ class StockRequest(BaseModel):
 
 class StockRemovalRequest(BaseModel):
     quantity: float
+    bags_removed: float = 0.0
     location: str
+    loc_id: str = "default"
     usage: str
     remarks: Optional[str] = ""
     transaction_id: Optional[str] = None
+    storage_mode: str = "UNIT"
 
 class StockTransferRequest(BaseModel):
     barcode_id: str

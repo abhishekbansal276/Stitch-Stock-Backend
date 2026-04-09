@@ -16,7 +16,7 @@ class InventoryService:
     def upsert_position(self, barcode_id: str, product_name: str, product_code: str, 
                        unit: str, distributions: List[Dict], 
                        supplier_name: str = None, batch_number: str = None,
-                       storage_type: str = "UNIT", number_of_bags: int = 0,
+                       storage_mode: str = "UNIT", number_of_bags: int = 0,
                        user_name: str = "System", is_merged: bool = False):
         """
         UPGRADED: One Doc per Product/Batch.
@@ -176,7 +176,7 @@ class InventoryService:
             'min_stock_level': existing_data.get('min_stock_level', 0),
             'supplier_name': supplier_name or existing_data.get('supplier_name') or 'N/A',
             'batch_number': 'AGGREGATED' if is_merged else (batch_number or existing_data.get('batch_number')),
-            'storage_type': storage_type,
+            'storage_mode': storage_mode,
             'number_of_bags': total_bags,
             'created_by': existing_data.get('created_by', user_name),
             'updated_by': user_name,
@@ -470,23 +470,58 @@ class InventoryService:
             print(f"📖 [AUDIT_MODE] Stock {doc_id} removal (Audit Check Only)")
             transaction = db.transaction()
             self.check_and_alert_only(transaction, doc_ref)
-            data = doc_ref.get().to_dict()
-            new_total = data.get('total_qty', 0)
-        else:
-            print(f"⚡ [DEDUCTION_MODE] Stock {doc_id} removal from location {loc_id}")
-            transaction = db.transaction()
-            # We must pass the transaction object to the internal logic
-            new_total = self.deduct_from_location(transaction, doc_ref, loc_id, qty, bags_removed=bags_removed)
+    async def remove_stock_spatial(self, doc_id: str, loc_id: str, qty: float, 
+                                bags_removed: float = 0.0, user: dict = None, 
+                                background_tasks: any = None) -> float:
+        """
+        [ATOMIC] Deducts stock from a specific spatial location within a document.
+        Logic: Decrements loc_id distribution, updates doc-level total, and syncs to Sheets.
+        """
+        doc_ref = self.collection.document(doc_id)
         
-        # ── RELIABLE HYBRID SYNC ──
+        # ── ATOMIC TRANSACTION ──
+        @firestore.transactional
+        def update_in_transaction(transaction, ref):
+            snapshot = ref.get(transaction=transaction)
+            if not snapshot.exists: return None
+            
+            data = snapshot.to_dict()
+            dists = data.get('distributions', [])
+            
+            # Find and update specific distribution
+            target = next((d for d in dists if d['dist_id'] == loc_id), None)
+            if not target: return None
+            
+            curr_qty = float(target.get('qty', 0))
+            if curr_qty < qty: return -1 # Insufficient
+            
+            new_dist_qty = round(curr_qty - qty, 4)
+            target['qty'] = new_dist_qty
+            
+            # Sync Bag removal if provided
+            if bags_removed > 0:
+                curr_bags = float(target.get('bags', 0))
+                target['bags'] = max(0, round(curr_bags - bags_removed))
+            
+            new_total = round(float(data.get('total_qty', 0)) - qty, 4)
+            
+            transaction.update(ref, {
+                'distributions': dists,
+                'total_qty': new_total,
+                'updated_at': int(time.time())
+            })
+            return new_total
+
+        new_total = update_in_transaction(db.transaction(), doc_ref)
+        if new_total is None: return 0.0 # Error state handled by controller
+        
+        # ── BACKGROUND LEDGER SYNC ──
         try:
             from app.services.sheets import sheets_service
-            # Fetch doc again to get warehouse/location for movement record
             data = doc_ref.get().to_dict()
             dist = next((d for d in data.get('distributions', []) if d.get('dist_id') == loc_id), {})
             user_display = user.get('full_name', user['email']) if user else "System"
             
-            # Prepare payload for potential retry
             sync_payload = {
                 "barcode_id": data.get('barcode_id', doc_id),
                 "product_code": data.get('product_code', ''),
@@ -497,23 +532,16 @@ class InventoryService:
                 "location": dist.get('location', 'General'),
                 "user_display": user_display,
                 "dist_id": loc_id,
-                "warehouse_id": dist.get('warehouse_id', 'default')
+                "warehouse_id": dist.get('warehouse_id', 'default'),
+                "storage_mode": data.get('storage_mode', 'UNIT')
             }
 
-            try:
+            if background_tasks:
+                print(f"📡 [REMOVE_ASYNC] Scheduling background sync for {doc_id}...")
+                background_tasks.add_task(sheets_service.record_dispatch, **sync_payload)
+            else:
                 sheets_service.record_dispatch(**sync_payload)
-            except ValueError as ve:
-                # Logic Error (e.g. Product NOT found in Sheets) - RE-RAISE for immediate user feedback
-                print(f"🛑 [SYNC_LOGIC_ERROR] Permanent failure: {ve}")
-                raise ve
-            except Exception as te:
-                # Technical Error (e.g. Network Timeout) - QUEUE for Background Reaper
-                print(f"📡 [SYNC_TECH_ERROR] Backgrounding deduction due to network: {te}")
-                self.queue_pending_sync("DISPATCH", sync_payload)
-                # We return the new total but the API should ideally return a 202
                 
-        except ValueError:
-            raise # Pass-through logic errors
         except Exception as e:
             print(f"⚠️ Unexpected Sync Handler Error: {e}")
             

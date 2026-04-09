@@ -1450,7 +1450,8 @@ class SheetsService:
     def record_dispatch(self, barcode_id: str, qty: float, bags_removed: float = 0, 
                         warehouse: str = "", location: str = "", user_display: str = "System", 
                         dist_id: str = "default", warehouse_id: str = "default",
-                        product_code: str = "", batch_number: str = ""):
+                        product_code: str = "", batch_number: str = "", 
+                        storage_mode: str = "UNIT"):
         """
         Deducts stock from the spreadsheet ledger and records the movement.
         """
@@ -1493,49 +1494,61 @@ class SheetsService:
                 new_qty = max(0.0, curr_qty - qty)
                 new_bags = max(0, int(round(curr_bags)) - int(round(bags_removed)))
 
-                # Batch update the row
+                # Batch update the row - SELECTIVE based on storage_mode
+                update_cells = []
+                if storage_mode != 'BAG':
+                    update_cells.append({"range": f"Stock Register!{qty_col}{row_idx}", "values": [[self._clean_num(new_qty)]]})
+                
+                update_cells.append({"range": f"Stock Register!{bags_col}{row_idx}", "values": [[int(round(new_bags))]]})
+                update_cells.append({"range": f"Stock Register!{updated_at_col}{row_idx}:{updated_by_col}{row_idx}", "values": [[self._get_now_ist().strftime("%Y-%m-%d %H:%M:%S"), user_display]]})
+
                 self.service.spreadsheets().values().batchUpdate(
                     spreadsheetId=self.spreadsheet_id,
-                    body={"valueInputOption": "USER_ENTERED", "data": [
-                        {"range": f"Stock Register!{qty_col}{row_idx}", "values": [[self._clean_num(new_qty)]]},
-                        {"range": f"Stock Register!{bags_col}{row_idx}", "values": [[int(round(new_bags))]]},
-                        {"range": f"Stock Register!{updated_at_col}{row_idx}:{updated_by_col}{row_idx}", "values": [[self._get_now_ist().strftime("%Y-%m-%d %H:%M:%S"), user_display]]}
-                    ]}
+                    body={"valueInputOption": "USER_ENTERED", "data": update_cells}
                 ).execute()
 
-                # 2. Record Movement
-                name_res = self.service.spreadsheets().values().get(
-                    spreadsheetId=self.spreadsheet_id,
-                    range=f"Stock Register!{self._get_col_letter(h.get('Product Name', 4))}{row_idx}"
-                ).execute()
-                p_name = name_res.get("values", [["Unknown"]])[0][0]
+                # 4. Record Movement & Update Summary
+                # We use the provided product metadata if available to avoid redundant read calls
+                p_name_final = product_code or "Unknown"
+                p_code_final = product_code or ""
                 
+                # Fetch name if missing (rare case)
+                if not product_code:
+                    name_res = self.service.spreadsheets().values().get(
+                        spreadsheetId=self.spreadsheet_id,
+                        range=f"Stock Register!{self._get_col_letter(h.get('Product Name', 4))}{row_idx}"
+                    ).execute()
+                    p_name_final = name_res.get("values", [["Unknown"]])[0][0]
+                    
+                    code_res = self.service.spreadsheets().values().get(
+                        spreadsheetId=self.spreadsheet_id,
+                        range=f"Stock Register!{self._get_col_letter(h.get('Product Code', 5))}{row_idx}"
+                    ).execute()
+                    p_code_final = code_res.get("values", [[""]])[0][0]
+
+                # Record Movement
                 movement_row = [
-                    self._get_now_ist().strftime("%Y-%m-%d %H:%M:%S"), p_name, "OUT", 
+                    self._get_now_ist().strftime("%Y-%m-%d %H:%M:%S"), p_name_final, "OUT", 
                     self._clean_num(qty), self._clean_num(bags_removed), 
                     warehouse, location, user_display,
                     f"MOV-{int(time.time())}", barcode_id, f"DISP-{uuid.uuid4().hex[:4].upper()}", dist_id, warehouse_id
                 ]
                 self._append_row("Stock Movements", movement_row)
 
-                # 3. Update Summary
-                code_res = self.service.spreadsheets().values().get(
-                    spreadsheetId=self.spreadsheet_id,
-                    range=f"Stock Register!{self._get_col_letter(h.get('Product Code', 5))}{row_idx}"
-                ).execute()
-                p_code = code_res.get("values", [[""]])[0][0]
-                
-                if p_code:
-                    # _update_summary_row is called within the lock context to prevent duplicate rows
-                    self._update_summary_row(p_name, p_code, -qty, "OUT", bags_delta=-bags_removed)
+                # Update Summary Sheet
+                if p_code_final:
+                    self._update_summary_row(p_name_final, p_code_final, -qty, "OUT", bags_delta=-bags_removed, storage_mode=storage_mode)
+                    print(f"✅ Sheets Sync: Deducted {qty if storage_mode != 'BAG' else 0} qty / {bags_removed} bags of {p_name_final} and updated Summary.")
+                else:
+                    print(f"⚠️ Sheets Sync: Deduction succeeded but could not resolve product code for summary update.")
 
-                print(f"✅ Sheets Sync: Deducted {qty} of {p_name} ({barcode_id})")
+                print(f"✅ Sheets Sync: Deducted {qty} of {p_name_final} ({barcode_id})")
 
             except Exception as e:
                 print(f"Sheets Record Dispatch Error: {e}")
                 traceback.print_exc()
 
-    def _update_summary_row(self, name: str, code: str, qty_delta: float, m_type: str, bags_delta: float = 0.0):
+    def _update_summary_row(self, name: str, code: str, qty_delta: float, m_type: str, bags_delta: float = 0.0, storage_mode: str = "UNIT"):
         """Helper to update the aggregate balance and totals in Stock Summary."""
         if not self.service: return
         try:
@@ -1580,10 +1593,10 @@ class SheetsService:
                 curr_in_bags = self._to_float(curr_row[7]) if len(curr_row) > 7 else 0.0
                 curr_out_bags = self._to_float(curr_row[8]) if len(curr_row) > 8 else 0.0
                 
-                new_bal  = max(0.0, round(curr_bal + qty_delta, 4))
+                new_bal  = round(curr_bal + (qty_delta if storage_mode != 'BAG' else 0.0), 4)
                 new_bags = max(0, int(round(curr_bags + bags_delta)))
-                new_in_qty = round(curr_in_qty + (max(0, qty_delta) if m_type == "IN" else 0.0), 4)
-                new_out_qty = round(curr_out_qty + (abs(min(0, qty_delta)) if m_type == "OUT" else 0.0), 4)
+                new_in_qty = round(curr_in_qty + (max(0, qty_delta) if m_type == "IN" and storage_mode != 'BAG' else 0.0), 4)
+                new_out_qty = round(curr_out_qty + (abs(min(0, qty_delta)) if m_type == "OUT" and storage_mode != 'BAG' else 0.0), 4)
                 new_in_bags = int(curr_in_bags + (max(0, bags_delta) if m_type == "IN" else 0.0))
                 new_out_bags = int(curr_out_bags + (abs(min(0, bags_delta)) if m_type == "OUT" else 0.0))
                 
