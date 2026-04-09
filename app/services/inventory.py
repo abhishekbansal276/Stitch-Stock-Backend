@@ -127,10 +127,15 @@ class InventoryService:
         # ── 3. FINAL AUDIT & CONSOLIDATION: Merge distribution duplicates ──
         consolidated = {}
         for d in merged_dists:
-            # [FIX] Enforcement: If unit is bags, qty and bags MUST be the same.
-            # We use bags as the authority for bag-items to resolve any divergence.
+            # [FIX] Enforcement (Robust): If unit is bags, qty and bags MUST be the same.
+            # This logic now handles legacy data that may be missing the 'bags' field.
             if 'bag' in str(d.get('unit_type', '')).lower():
-                d['qty'] = safe_int(d.get('bags', 0))
+                b_val = safe_int(d.get('bags', 0))
+                q_val = safe_int(d.get('qty', 0))
+                # Robust Truth Discovery: Use bags if present, otherwise fallback to qty
+                source_truth = b_val if b_val > 0 else q_val
+                d['qty'] = source_truth
+                d['bags'] = source_truth
 
             # Identity key: Warehouse + Location + Batch
             key = f"{normalize_id(d.get('warehouse', 'WH'))}-{normalize_id(d.get('location', 'LOC'))}-{normalize_id(d.get('batch_number', 'NB'))}"
@@ -146,7 +151,11 @@ class InventoryService:
         # Final audit for missing batch numbers and final bag-sync check after consolidation
         for d in merged_dists:
             if 'bag' in str(d.get('unit_type', '')).lower():
-                d['qty'] = safe_int(d.get('bags', 0))
+                b_val = safe_int(d.get('bags', 0))
+                q_val = safe_int(d.get('qty', 0))
+                source_truth = b_val if b_val > 0 else q_val
+                d['qty'] = source_truth
+                d['bags'] = source_truth
             if not d.get('batch_number') or str(d['batch_number']).strip() == "":
                 d['batch_number'] = batch_number or 'NB'
 
@@ -709,9 +718,15 @@ class InventoryService:
 
                     # [FIX] Force 1:1 sync for bag items to resolve divergence
                     if is_bag_item:
-                        if curr_qty != curr_bags:
-                             print(f"🛠️ [SELF-HEAL] Harmonizing bag/qty divergence: {curr_qty} -> {curr_bags}")
-                             curr_qty = curr_bags
+                        # Robust Truth Discovery: Use 'bags' if present and > 0, otherwise fallback to 'qty'
+                        # This prevents legacy stock (missing 'bags' field) from being zeroed out.
+                        source_truth = curr_bags if curr_bags > 0 else curr_qty
+                        
+                        if curr_qty != source_truth or curr_bags != source_truth:
+                             print(f"🛠️ [SELF-HEAL] Harmonizing bag/qty divergence: {curr_qty}/{curr_bags} -> {source_truth}")
+                             curr_qty = source_truth
+                             dist['bags'] = source_truth # Persistence for legacy data healing
+                        
                         adj_qty = bags_to_move
                         
                     if adj_qty > 0 and curr_qty < adj_qty - 0.001:
@@ -747,8 +762,11 @@ class InventoryService:
                     
                     # [FIX] Force 1:1 sync for bag items 
                     if 'bag' in d_unit_type:
-                        if float(d_qty_val) != d_bags_val:
-                            d_qty_val = d_bags_val
+                        # Robust Truth Discovery
+                        d_source_truth = d_bags_val if d_bags_val > 0 else float(d_qty_val)
+                        if float(d_qty_val) != d_source_truth or d_bags_val != d_source_truth:
+                            d_qty_val = d_source_truth
+                            dist['bags'] = d_source_truth # Heal destination if needed
                         d_adj_qty = bags_to_move
 
                     dist['qty'] = float(d_qty_val) + d_adj_qty
