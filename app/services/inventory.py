@@ -97,8 +97,9 @@ class InventoryService:
         merged_dists = current_dists.copy()
         for new_d in distributions:
             # Ensure incoming dist has an ID and a local batch reference
+            batch_ref = new_d.get('batch_number') or batch_number or 'NB'
             if not new_d.get('dist_id') or new_d.get('dist_id') == 'AUTO':
-                seed = f"{barcode_id}-{new_d.get('warehouse')}-{new_d.get('location')}"
+                seed = f"{barcode_id}-{new_d.get('warehouse')}-{new_d.get('location')}-{batch_ref}"
                 new_d['dist_id'] = generate_12_digit_hash(seed)
             
             # If the incoming distribution doesn't have a batch, use the parent one
