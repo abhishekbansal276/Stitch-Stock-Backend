@@ -714,20 +714,30 @@ async def transfer_stock_position(req: StockTransferRequest, user: dict = Depend
         from_dist = next((d for d in f_item.get('distributions', []) if d.get('dist_id') == req.from_location), None)
         
         # Prioritize manual bag count if provided (>0)
-        bags_to_move = float(req.bags) if req.bags > 0 else 0
-        if bags_to_move <= 0 and storage_type == 'BAG' and from_dist and from_dist.get('qty', 0) > 0:
-            current_qty = float(from_dist.get('qty', 0))
-            current_bags = float(from_dist.get('number_of_bags') or from_dist.get('bags') or 0)
-            ratio = req.quantity / current_qty
-            bags_to_move = int(round(current_bags * ratio))
+        u_type = str(f_item.get('unit', '')).lower()
+        st_type = str(f_item.get('storage_type', '')).upper()
+        is_bag_item = 'bag' in u_type or st_type == 'BAG'
+
+        if is_bag_item:
+            # For bag items, bags always equals qty
+            bags_to_move = req.quantity
+        else:
+            bags_to_move = float(req.bags) if req.bags > 0 else 0
+            if bags_to_move <= 0 and from_dist and from_dist.get('qty', 0) > 0:
+                current_qty = float(from_dist.get('qty', 0))
+                current_bags = float(from_dist.get('number_of_bags') or from_dist.get('bags') or 0)
+                ratio = req.quantity / current_qty
+                bags_to_move = int(round(current_bags * ratio))
 
         # Determine if we should record "N/A" for metrics in sheets log
         final_qty_log = req.quantity
         final_bags_log = bags_to_move
         
-        if storage_type == 'BAG' or str(f_item.get('unit')).upper() == 'BAGS':
+        if is_bag_item:
+            # Sheets Strategy: Keep Qty as N/A in the Movements ledger for bag items 
+            # to remain consistent with the 'Bags only' reporting style in the register
             final_qty_log = "N/A"
-        elif storage_type == 'UNIT':
+        elif st_type == 'UNIT':
             final_bags_log = "N/A"
 
         # 1. Update Firestore Atomic Map (Internal distributions)

@@ -127,15 +127,18 @@ class InventoryService:
         # ── 3. FINAL AUDIT & CONSOLIDATION: Merge distribution duplicates ──
         consolidated = {}
         for d in merged_dists:
-            # [FIX] Enforcement (Robust): If unit is bags, qty and bags MUST be the same.
-            # This logic now handles legacy data that may be missing the 'bags' field.
-            if 'bag' in str(d.get('unit_type', '')).lower():
-                b_val = safe_int(d.get('bags', 0))
-                q_val = safe_int(d.get('qty', 0))
-                # Robust Truth Discovery: Use bags if present, otherwise fallback to qty
-                source_truth = b_val if b_val > 0 else q_val
-                d['qty'] = source_truth
-                d['bags'] = source_truth
+            u_type = str(d.get('unit_type', '')).lower()
+            is_bag_unit = 'bag' in u_type
+            
+            # [FIX] Consolidate: If unit is 'bags', only store 'qty'. 
+            # We preserve 'bags' only for items like KG where quantity != packaging count.
+            if is_bag_unit:
+                q_val = safe_float(d.get('qty', 0))
+                b_val = safe_float(d.get('bags', 0))
+                # Robustness: if qty is 0 but bags has data, pull it into qty
+                if q_val == 0 and b_val > 0: q_val = b_val
+                d['qty'] = q_val
+                if 'bags' in d: del d['bags']
 
             # Identity key: Warehouse + Location + Batch
             key = f"{normalize_id(d.get('warehouse', 'WH'))}-{normalize_id(d.get('location', 'LOC'))}-{normalize_id(d.get('batch_number', 'NB'))}"
@@ -144,25 +147,29 @@ class InventoryService:
                 consolidated[key] = d
             else:
                 consolidated[key]['qty'] = safe_float(consolidated[key].get('qty', 0)) + safe_float(d.get('qty', 0))
-                consolidated[key]['bags'] = safe_int(consolidated[key].get('bags', 0)) + safe_int(d.get('bags', 0))
+                # Only aggregate bags for non-bag unit types
+                if not is_bag_unit:
+                    consolidated[key]['bags'] = safe_int(consolidated[key].get('bags', 0)) + safe_int(d.get('bags', 0))
         
         merged_dists = list(consolidated.values())
 
         # Final audit for missing batch numbers and final bag-sync check after consolidation
         for d in merged_dists:
             if 'bag' in str(d.get('unit_type', '')).lower():
-                b_val = safe_int(d.get('bags', 0))
-                q_val = safe_int(d.get('qty', 0))
-                source_truth = b_val if b_val > 0 else q_val
-                d['qty'] = source_truth
-                d['bags'] = source_truth
+                # Re-verify cleanup just in case of merge leftovers
+                if 'bags' in d: del d['bags']
             if not d.get('batch_number') or str(d['batch_number']).strip() == "":
                 d['batch_number'] = batch_number or 'NB'
 
         # ── 3. FINALIZE DATA ──
         total_qty = sum(safe_float(d.get('qty', 0)) for d in merged_dists)
-        # Bag count is now derived from the consolidated distributions for truth
-        total_bags = sum(safe_int(d.get('bags', 0)) for d in merged_dists)
+        
+        # [NEW] Total Bags Calculation: Derive from QTY if item is bag-based
+        is_item_bag_based = 'bag' in str(unit).lower() or storage_type == 'BAG'
+        if is_item_bag_based:
+            total_bags = total_qty
+        else:
+            total_bags = sum(safe_int(d.get('bags', 0)) for d in merged_dists)
         
         # Track all barcode IDs associated with this document
         barcode_ids = existing_data.get('barcode_ids', [])
@@ -437,16 +444,24 @@ class InventoryService:
         found = False
         
         new_distributions = []
+        is_item_bag_based = 'bag' in str(data.get('unit', '')).lower() or data.get('storage_type') == 'BAG'
+        
         for dist in distributions:
             if dist.get('dist_id') == loc_id:
                 curr_qty = float(dist.get('qty', 0))
-                curr_bags = float(dist.get('bags', 0))
+                curr_bags = float(dist.get('bags', 0)) if not is_item_bag_based else curr_qty
                 
                 if curr_qty < qty - 0.001:
                     qty = curr_qty
                 
                 dist['qty'] = float(curr_qty - qty)
-                dist['bags'] = float(max(0, curr_bags - bags_removed))
+                
+                # Update/Remove bags logic
+                if is_item_bag_based:
+                    if 'bags' in dist: del dist['bags']
+                else:
+                    dist['bags'] = float(max(0, curr_bags - bags_removed))
+                    
                 found = True
             new_distributions.append(dist)
             
@@ -454,9 +469,14 @@ class InventoryService:
             raise Exception(f"Position ID {loc_id} not found for this item.")
             
         old_total = float(data.get('total_qty', 0))
-        old_bags = float(data.get('number_of_bags', 0))
-        new_total = old_total - qty
-        new_bags = max(0, old_bags - bags_removed)
+        new_total = float(max(0, old_total - qty))
+        
+        # Calculate new bags total
+        if is_item_bag_based:
+            new_bags = new_total
+        else:
+            old_bags = float(data.get('number_of_bags', 0))
+            new_bags = float(max(0, old_bags - bags_removed))
         
         # Update searchable locations index
         search_locations = []
@@ -713,25 +733,25 @@ class InventoryService:
                 if str(s_qty_val).strip() == "N/A":
                     dist['qty'] = "N/A"
                 else:
+                    # [FIX] Consolidated Metric Strategy:
+                    # If unit is bags, we rely solely on 'qty' in the map.
                     curr_qty = float(s_qty_val)
-                    curr_bags = float(dist.get('bags', 0))
-
-                    # [FIX] Force 1:1 sync for bag items to resolve divergence
+                    curr_bags = float(dist.get('bags', 0)) if not is_bag_item else curr_qty
+                    
                     if is_bag_item:
-                        # Robust Truth Discovery: Use 'bags' if present and > 0, otherwise fallback to 'qty'
-                        # This prevents legacy stock (missing 'bags' field) from being zeroed out.
-                        source_truth = curr_bags if curr_bags > 0 else curr_qty
-                        
-                        if curr_qty != source_truth or curr_bags != source_truth:
-                             print(f"🛠️ [SELF-HEAL] Harmonizing bag/qty divergence: {curr_qty}/{curr_bags} -> {source_truth}")
-                             curr_qty = source_truth
-                             dist['bags'] = source_truth # Persistence for legacy data healing
+                        # Robust Truth Extraction: If bags existed, ensure it was moved to qty
+                        if curr_qty == 0 and curr_bags > 0: curr_qty = curr_bags
                         
                         adj_qty = bags_to_move
-                        
+                        dist['qty'] = curr_qty - adj_qty
+                        if 'bags' in dist: del dist['bags'] # Cleanup redundant field
+                    else:
+                        adj_qty = qty
+                        dist['qty'] = curr_qty - adj_qty
+                        dist['bags'] = max(0, curr_bags - bags_to_move)
+
                     if adj_qty > 0 and curr_qty < adj_qty - 0.001:
                         raise Exception(f"Insufficient stock in source position (Has {curr_qty}, Needs {adj_qty}).")
-                    dist['qty'] = curr_qty - adj_qty
                 
                 # Bags Logic: Preserve N/A string
                 s_bags_val = dist.get('bags', 0)
@@ -790,19 +810,24 @@ class InventoryService:
             seed = f"{clean_code}-{to_warehouse}-{to_location}-{batch_ref}"
             new_dist_id = generate_12_digit_hash(seed)
             
-            # Use "N/A" if source was "N/A"
-            final_qty = "N/A" if str(source_dist.get('qty')).strip() == "N/A" else qty
-            final_bags = "N/A" if str(source_dist.get('bags')).strip() == "N/A" else bags_to_move
+            # [FIX] Consolidated Metric Strategy for Destination
+            final_qty = "N/A" if str(source_dist.get('qty', 0)).strip() == "N/A" else qty
+            unit_type = source_dist.get('unit_type', 'PCS')
+            is_bag_item = 'bag' in str(unit_type).lower()
             
-            new_distributions.append({
+            new_dist = {
                 'warehouse': to_warehouse, 
                 'location': to_location, 
                 'qty': final_qty, 
-                'bags': final_bags,
                 'dist_id': new_dist_id,
                 'batch_number': batch_ref,
-                'unit_type': source_dist.get('unit_type', 'PCS') # [NEW] Inherit unit type
-            })
+                'unit_type': unit_type
+            }
+            
+            if not is_bag_item:
+                new_dist['bags'] = "N/A" if str(source_dist.get('bags', 0)).strip() == "N/A" else bags_to_move
+            
+            new_distributions.append(new_dist)
 
         # Cleanup: Only remove if numeric and <= 0. Keep "N/A" strings.
         cleaned_distributions = []
