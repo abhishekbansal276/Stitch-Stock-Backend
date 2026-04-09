@@ -691,7 +691,7 @@ class InventoryService:
     @staticmethod
     @firestore.transactional
     def execute_transfer(transaction, doc_ref, from_dist_id: str, 
-                         to_warehouse: str, to_location: str, 
+                         to_warehouse: str, to_location: str, to_warehouse_id: str = None,
                          from_warehouse: str = "N/A", from_location: str = "Relocation",
                          qty: float = 0, bags: float = 0):
         """Atomic inter-zone transfer within a stock document."""
@@ -818,6 +818,7 @@ class InventoryService:
             new_dist = {
                 'warehouse': to_warehouse, 
                 'location': to_location, 
+                'warehouse_id': to_warehouse_id, # [SCHEMA-ALIGNED]
                 'qty': final_qty, 
                 'dist_id': new_dist_id,
                 'batch_number': batch_ref,
@@ -861,14 +862,15 @@ class InventoryService:
         return True
 
     def transfer_stock(self, doc_id: str, from_loc_id: str, to_loc_id: str, 
-                       to_warehouse: str, to_location: str, 
+                       to_warehouse: str, to_location: str, to_warehouse_id: str = None, # [SCHEMA-ALIGNED]
                        from_warehouse: str = "N/A", from_location: str = "Relocation",
                        qty: float = 0, bags: float = 0):
         doc_ref = self.collection.document(doc_id)
         transaction = db.transaction()
         return InventoryService.execute_transfer(
             transaction, doc_ref, from_loc_id, 
-            to_warehouse, to_location, from_warehouse, from_location,
+            to_warehouse, to_location, to_warehouse_id, # [SCHEMA-ALIGNED]
+            from_warehouse, from_location,
             qty, bags=bags
         )
 

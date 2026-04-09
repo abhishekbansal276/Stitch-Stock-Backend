@@ -747,6 +747,7 @@ async def transfer_stock_position(req: StockTransferRequest, user: dict = Depend
             to_loc_id=req.to_location, # ID for cross-indexing
             to_warehouse=req.to_warehouse_name,
             to_location=req.to_location_name,
+            to_warehouse_id=req.to_warehouse_id, # [SCHEMA-ALIGNED]
             from_warehouse=req.from_warehouse_name,
             from_location=req.from_location_name,
             qty=req.quantity, 
@@ -793,8 +794,8 @@ async def transfer_stock_position(req: StockTransferRequest, user: dict = Depend
                 'product_code': f_item.get('product_code', req.barcode_id),
                 'from_location': req.from_location_name,
                 'to_location': req.to_location_name,
-                'qty': req.quantity,
-                'bags': bags_to_move,
+                'qty': float(req.quantity),
+                'bags': "N/A" if is_bag_item else bags_to_move, # [SCHEMA-ALIGNED] Prevent duplicate metrics for bags
                 'unit': f_item.get('unit', 'QTY'),
                 'unit_type': from_dist.get('unit_type') if from_dist else f_item.get('unit', 'QTY'),
                 'actor_name': user_display,
