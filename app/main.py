@@ -785,6 +785,7 @@ async def transfer_stock_position(req: StockTransferRequest, user: dict = Depend
                 'to_location': req.to_location_name,
                 'qty': req.quantity,
                 'bags': bags_to_move,
+                'unit': f_item.get('unit', 'QTY'),
                 'actor_name': user_display,
                 'created_at': int(time.time()),
                 'type': 'RELOCATE'
