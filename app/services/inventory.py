@@ -840,7 +840,18 @@ class InventoryService:
             elif float(v) > 0.001:
                 cleaned_distributions.append(d)
         
-        # 3. Recalculate location search index (Single Clean Pass)
+        # 3. Recalculate Totals & location search index (Single Clean Pass)
+        new_total_qty = sum(safe_float(d.get('qty', 0)) for d in cleaned_distributions)
+        
+        # Determine product metrics for final cleanup
+        # Note: We use existing document data 'storage_type' or distributions as a hint
+        item_unit = str(data.get('unit', '')).upper()
+        # Item is bag based if any distribution is bags OR top-level says so
+        is_bag_product = 'BAG' in str(data.get('storage_type', '')).upper() or \
+                         any('bag' in str(d.get('unit_type', '')).lower() for d in cleaned_distributions)
+
+        new_total_bags = new_total_qty if is_bag_product else sum(safe_float(d.get('bags', 0)) for d in cleaned_distributions)
+
         search_locations = []
         for d in cleaned_distributions:
             wh = d.get('warehouse')
@@ -853,11 +864,25 @@ class InventoryService:
             
         new_location_ids = list(set([l for l in search_locations if l]))
 
-        transaction.update(doc_ref, {
+        # --- PREPARE LEAN UPDATE ---
+        update_map = {
             'distributions': cleaned_distributions,
             'location_ids': new_location_ids,
+            'total_qty': new_total_qty,
             'updated_at': int(time.time())
-        })
+        }
+        
+        # SCHEMA-STRICT: Remove redundant unit
+        if item_unit == "N/A" or is_bag_product:
+            transaction.update(doc_ref, {'unit': firestore.DELETE_FIELD})
+        
+        # SCHEMA-STRICT: Handle redundant total bags
+        if is_bag_product:
+            transaction.update(doc_ref, {'number_of_bags': firestore.DELETE_FIELD})
+        else:
+            update_map['number_of_bags'] = new_total_bags
+
+        transaction.update(doc_ref, update_map)
         # Update index for new positions
         inventory_service._update_cross_index(data.get('barcode_id'), cleaned_distributions)
         return True
