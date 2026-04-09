@@ -700,51 +700,82 @@ async def get_items_by_zone(loc_id: str, user: dict = Depends(get_current_user))
 async def transfer_stock_position(req: StockTransferRequest, user: dict = Depends(get_current_user)):
     """Operation: Atomically moves stock between zones with audit trail."""
     try:
-        user_display = user['email']
+        user_display = user.get('full_name', user['email'])
         
-        # 0. Fetch Item details for rich logging
-        item = sheets_service.get_stock_item(req.barcode_id)
-        item_name = item.get('item_name', 'Transfer Item') if item else "Move Operation"
-        item_desc = item.get('description', '') if item else ""
+        # 0. Fetch Item details for rich logging and proportional calculation
+        res = inventory_service.find_by_dist_id(req.barcode_id)
+        if not res or not res.get('item'):
+            raise HTTPException(status_code=404, detail="Stock position not found")
+            
+        f_item = res['item']
+        storage_type = f_item.get('storage_type', 'UNIT')
+        
+        # Find the source distribution to calculate bags proportionally (if not provided explicitly)
+        from_dist = next((d for d in f_item.get('distributions', []) if d.get('dist_id') == req.from_location), None)
+        
+        bags_to_move = float(req.bags) if req.bags > 0 else 0
+        if bags_to_move <= 0 and storage_type == 'BAG' and from_dist and from_dist.get('qty', 0) > 0:
+            current_qty = float(from_dist.get('qty', 0))
+            current_bags = float(from_dist.get('number_of_bags') or from_dist.get('bags') or 0)
+            ratio = req.quantity / current_qty
+            bags_to_move = int(round(current_bags * ratio))
 
-        # 1. Update Firestore Atomic Map
+        # 1. Update Firestore Atomic Map (Internal distributions)
         inventory_service.transfer_stock(
-            req.barcode_id, req.from_location, req.to_location, req.to_location_name, req.quantity
+            req.barcode_id, req.from_location, req.to_location, req.to_location_name, req.quantity, bags=bags_to_move
         )
         
         # 2. RELIABLE HYBRID SYNC: Google Sheets Movement
         loc_audit = f"{req.from_location_name} ➔ {req.to_location_name}"
-        sync_payload = {
-            "barcode_id": req.barcode_id,
-            "reason": req.reason or "WMS-TRANSFER",
-            "type": "TRANSFER",
-            "qty": req.quantity,
-            "user_display": user_display,
-            "location": loc_audit
-        }
-
-        try:
-            # Attempt synchronous sync
-            sheets_service.add_movement(**sync_payload)
-        except Exception as e:
-            # Technical failure: Queue for background retry
-            print(f"📡 [TRANSFER_SYNC_TECH_ERROR] Queueing transfer for background: {e}")
-            inventory_service.queue_pending_sync("TRANSFER", sync_payload)
-            # Response remains success as Firestore is already updated
         
-        # 3. Log Activity & Notify Admins
+        try:
+            # Record in Sheets Movements ledger as RELOCATE
+            sheets_service.record_relocation(
+                barcode_id=req.barcode_id,
+                qty=req.quantity,
+                bags=bags_to_move,
+                from_location=req.from_location_name,
+                to_location=req.to_location_name,
+                user_display=user_display,
+                product_name=f_item.get('product_name', 'Stock Item'),
+                dist_id=req.from_location
+            )
+        except Exception as e:
+            print(f"📡 [TRANSFER_SHEETS_ERROR] Failed to sync relocation to Sheets: {e}")
+            # Resilience fallback: queue sync task (optional, here we rely on the manual janitor)
+        
+        # 3. Log Activity & Notify Admins (Global Audit Trail)
         activity_service.log_and_notify(
             user=user,
             action_type="TRANSFER",
-            item_name=item_name,
-            product_code=req.barcode_id,
+            item_name=f_item.get('product_name', 'Stock Item'),
+            product_code=f_item.get('product_code', req.barcode_id),
             qty_change=req.quantity,
             location=loc_audit,
-            description=item_desc
+            description=f"Relocated {req.quantity} ({bags_to_move} bags) from {req.from_location_name} to {req.to_location_name}."
         )
+
+        # 4. Store in Dedicated Relocation Collection
+        try:
+            relocation_data = {
+                'product_name': f_item.get('product_name', 'Stock Item'),
+                'product_code': f_item.get('product_code', req.barcode_id),
+                'from_location': req.from_location_name,
+                'to_location': req.to_location_name,
+                'qty': req.quantity,
+                'bags': bags_to_move,
+                'actor_name': user_display,
+                'created_at': int(time.time()),
+                'type': 'RELOCATE'
+            }
+            db.collection('relocation_logs').add(relocation_data)
+        except Exception as e:
+            print(f"📡 [RELOCATION_LOG_ERROR] Failed to save dedicated log: {e}")
         
-        return {"status": "success", "message": f"Stock moved to {req.to_location} successfully."}
+        return {"status": "success", "message": f"Stock moved to {req.to_location_name} successfully."}
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=400, detail=str(e))
 
 @app.post("/stock/{stock_item_id}/min-stock")

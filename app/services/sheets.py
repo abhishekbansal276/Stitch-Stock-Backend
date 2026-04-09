@@ -1628,9 +1628,40 @@ class SheetsService:
                     self._update_summary_row(p_name, p_code, -qty, "OUT", bags_delta=-bags_removed)
 
                 print(f"✅ Sheets Sync: Deducted {qty} of {p_name} ({barcode_id})")
-
             except Exception as e:
                 print(f"Sheets Record Dispatch Error: {e}")
+                traceback.print_exc()
+
+    def record_relocation(self, barcode_id: str, qty: float, bags: float = 0, 
+                          from_location: str = "", to_location: str = "", 
+                          user_display: str = "System", product_name: str = "Generic Item",
+                          dist_id: str = "default"):
+        """Records an internal transfer in the movements ledger."""
+        if not self.service: return
+        
+        with self.lock:
+            try:
+                location_path = f"{from_location} ➔ {to_location}"
+                
+                movement_row = [
+                    self._get_now_ist().strftime("%Y-%m-%d %H:%M:%S"), 
+                    product_name, 
+                    "RELOCATE", 
+                    self._clean_num(qty), 
+                    self._clean_num(bags), 
+                    "", # Warehouse
+                    location_path, 
+                    user_display,
+                    f"MOV-{int(time.time())}", 
+                    barcode_id, 
+                    f"REL-{uuid.uuid4().hex[:4].upper()}", 
+                    dist_id, 
+                    "N/A" # Warehouse ID
+                ]
+                self._append_row("Stock Movements", movement_row)
+                print(f"✅ Sheets Sync: Recorded Relocation of {qty} {product_name} ({location_path})")
+            except Exception as e:
+                print(f"Sheets Record Relocation Error: {e}")
                 traceback.print_exc()
 
     def _update_summary_row(self, name: str, code: str, qty_delta: float, m_type: str, bags_delta: float = 0.0):

@@ -652,8 +652,9 @@ class InventoryService:
                     })
         return results
 
+    @staticmethod
     @firestore.transactional
-    def execute_transfer(self, transaction, doc_ref, from_dist_id: str, to_warehouse: str, to_location: str, qty: float):
+    def execute_transfer(transaction, doc_ref, from_dist_id: str, to_warehouse: str, to_location: str, qty: float, bags: float = 0):
         """Atomic inter-zone transfer within a stock document."""
         snapshot = doc_ref.get(transaction=transaction)
         if not snapshot.exists:
@@ -666,34 +667,38 @@ class InventoryService:
         dest_found = False
         new_distributions = []
         
-        # 1. Calculate proportional bags to move if source has bag metadata
+        # 1. Determine bags to move
         source_dist = next((d for d in distributions if d.get('dist_id') == from_dist_id), None)
-        bags_to_move = 0
-        if source_dist:
+        bags_to_move = float(bags) if bags > 0 else 0
+        
+        if bags_to_move <= 0 and source_dist:
             s_qty = float(source_dist.get('qty', 0))
             s_bags = float(source_dist.get('bags', 0))
             if s_qty > 0 and s_bags > 0:
                 # Estimate bags based on proportion of qty being moved
-                bags_to_move = int(round((qty / s_qty) * s_bags))
+                bags_to_move = round((qty / s_qty) * s_bags)
                 # Safety: can't move more bags than exist
-                bags_to_move = min(bags_to_move, int(s_bags))
+                bags_to_move = min(bags_to_move, s_bags)
         
         # 2. Execute movement within distributions
         for dist in distributions:
             if dist.get('dist_id') == from_dist_id:
                 curr_qty = float(dist.get('qty', 0))
                 curr_bags = float(dist.get('bags', 0))
-                if curr_qty < qty - 0.001:
+                if qty > 0 and curr_qty < qty - 0.001:
                     raise Exception(f"Insufficient stock in source position (Has {curr_qty}, Needs {qty}).")
                 
+                if bags_to_move > 0 and curr_bags < bags_to_move - 0.001:
+                    bags_to_move = curr_bags # Cap to what is available at source
+                
                 dist['qty'] = curr_qty - qty
-                dist['bags'] = max(0, int(curr_bags) - bags_to_move)
+                dist['bags'] = max(0, curr_bags - bags_to_move)
                 source_found = True
             
             # Check if destination exists (Warehouse matches AND Location matches)
             if dist.get('warehouse') == to_warehouse and dist.get('location') == to_location:
                 dist['qty'] = float(dist.get('qty', 0)) + qty
-                dist['bags'] = int(dist.get('bags', 0)) + bags_to_move
+                dist['bags'] = float(dist.get('bags', 0)) + bags_to_move
                 dest_found = True
             
             new_distributions.append(dist)
@@ -737,13 +742,13 @@ class InventoryService:
             'updated_at': int(time.time())
         })
         # Update index for new positions
-        self._update_cross_index(data.get('barcode_id'), cleaned_distributions)
+        inventory_service._update_cross_index(data.get('barcode_id'), cleaned_distributions)
         return True
 
-    def transfer_stock(self, doc_id: str, from_loc_id: str, to_loc_id: str, to_loc_name: str, qty: float):
+    def transfer_stock(self, doc_id: str, from_loc_id: str, to_loc_id: str, to_loc_name: str, qty: float, bags: float = 0):
         doc_ref = self.collection.document(doc_id)
         transaction = db.transaction()
-        return self.execute_transfer(transaction, doc_ref, from_loc_id, to_loc_id, to_loc_name, qty)
+        return InventoryService.execute_transfer(transaction, doc_ref, from_loc_id, to_loc_id, to_loc_name, qty, bags=bags)
 
     def _update_cross_index(self, barcode_id: str, distributions: List[Dict]):
         """Internal worker to map position IDs back to parent items for O(1) discovery."""
