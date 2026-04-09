@@ -654,7 +654,10 @@ class InventoryService:
 
     @staticmethod
     @firestore.transactional
-    def execute_transfer(transaction, doc_ref, from_dist_id: str, to_warehouse: str, to_location: str, qty: float, bags: float = 0):
+    def execute_transfer(transaction, doc_ref, from_dist_id: str, 
+                         to_warehouse: str, to_location: str, 
+                         from_warehouse: str = "N/A", from_location: str = "Relocation",
+                         qty: float = 0, bags: float = 0):
         """Atomic inter-zone transfer within a stock document."""
         snapshot = doc_ref.get(transaction=transaction)
         if not snapshot.exists:
@@ -780,10 +783,17 @@ class InventoryService:
         inventory_service._update_cross_index(data.get('barcode_id'), cleaned_distributions)
         return True
 
-    def transfer_stock(self, doc_id: str, from_loc_id: str, to_loc_id: str, to_loc_name: str, qty: float, bags: float = 0):
+    def transfer_stock(self, doc_id: str, from_loc_id: str, to_loc_id: str, 
+                       to_warehouse: str, to_location: str, 
+                       from_warehouse: str = "N/A", from_location: str = "Relocation",
+                       qty: float = 0, bags: float = 0):
         doc_ref = self.collection.document(doc_id)
         transaction = db.transaction()
-        return InventoryService.execute_transfer(transaction, doc_ref, from_loc_id, to_loc_id, to_loc_name, qty, bags=bags)
+        return InventoryService.execute_transfer(
+            transaction, doc_ref, from_loc_id, 
+            to_warehouse, to_location, from_warehouse, from_location,
+            qty, bags=bags
+        )
 
     def _update_cross_index(self, barcode_id: str, distributions: List[Dict]):
         """Internal worker to map position IDs back to parent items for O(1) discovery."""

@@ -713,6 +713,7 @@ async def transfer_stock_position(req: StockTransferRequest, user: dict = Depend
         # Find the source distribution to calculate bags proportionally (if not provided explicitly)
         from_dist = next((d for d in f_item.get('distributions', []) if d.get('dist_id') == req.from_location), None)
         
+        # Prioritize manual bag count if provided (>0)
         bags_to_move = float(req.bags) if req.bags > 0 else 0
         if bags_to_move <= 0 and storage_type == 'BAG' and from_dist and from_dist.get('qty', 0) > 0:
             current_qty = float(from_dist.get('qty', 0))
@@ -731,7 +732,15 @@ async def transfer_stock_position(req: StockTransferRequest, user: dict = Depend
 
         # 1. Update Firestore Atomic Map (Internal distributions)
         inventory_service.transfer_stock(
-            req.barcode_id, req.from_location, req.to_location, req.to_location_name, req.quantity, bags=bags_to_move
+            doc_id=req.barcode_id, 
+            from_loc_id=req.from_location, 
+            to_loc_id=req.to_location, # ID for cross-indexing
+            to_warehouse=req.to_warehouse_name,
+            to_location=req.to_location_name,
+            from_warehouse=req.from_warehouse_name,
+            from_location=req.from_location_name,
+            qty=req.quantity, 
+            bags=bags_to_move
         )
         
         # 2. RELIABLE HYBRID SYNC: Google Sheets Movement
