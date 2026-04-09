@@ -1168,23 +1168,47 @@ class SheetsService:
                     else:
                         # ── PRECISION: Convert units vs bags based on user entry mode ──
                         # Ratio: total units / total bags for this specific item batch
+                        # Ratio: total units / total bags for this specific item batch
                         ratio = (qty / bags) if bags > 0 else 1.0
                         
                         for d in dists:
                             raw_val = d.get('qty', 0)
+                            is_na_entry = str(raw_val).strip().upper() == "N/A"
                             val = self._to_float(raw_val)
                             
                             # Allow "N/A" to be recorded, but skip purely numeric 0.0 values
-                            if str(raw_val).strip().upper() != "N/A" and val < 0.001: 
+                            if not is_na_entry and val < 0.001: 
                                 continue
                             
                             u_type = d.get('unit_type', 'qty')
-                            if u_type == 'bags':
-                                moving_bags = val
-                                moving_qty  = val * ratio
+                            moving_qty = 0.0
+                            moving_bags = 0.0
+
+                            # Determine N/A status based on original item metadata
+                            # because dist['qty'] might be N/A if it was the primary dist
+                            parent_qty_na = str(item.get("Quantity Received") or "").strip().upper() == "N/A"
+                            parent_bags_na = str(item.get("Number of Bags") or "").strip().upper() == "N/A"
+
+                            if parent_qty_na and not parent_bags_na:
+                                # Qty N/A, Bags are numeric
+                                moving_qty = "N/A"
+                                moving_bags = val if u_type == 'bags' else (val / ratio if ratio > 0 else 0)
+                            elif parent_bags_na and not parent_qty_na:
+                                # Bags N/A, Qty is numeric
+                                moving_bags = "N/A"
+                                moving_qty = val if u_type == 'qty' else (val * ratio)
+                            elif parent_qty_na and parent_bags_na:
+                                # Both N/A
+                                moving_qty = "N/A"
+                                moving_bags = "N/A"
                             else:
-                                moving_qty  = val
-                                moving_bags = val / ratio if ratio > 0 else 0
+                                # Standard numeric logic
+                                if u_type == 'bags':
+                                    moving_bags = val
+                                    moving_qty  = val * ratio
+                                else:
+                                    moving_qty  = val
+                                    moving_bags = val / ratio if ratio > 0 else 0
                             
                             movements_append.append([
                                 now.strftime("%Y-%m-%d %H:%M:%S"), name, "IN", 
@@ -1639,12 +1663,15 @@ class SheetsService:
                     print(f"⚠️ [SUMMARY_WARN] Could not find code {code} for deduction.")
                     return
 
-                # Add new summary row (Only for IN)
+                # N/A Aware Logic for New Row
+                is_na_qty = str(qty_delta).strip().upper() == "N/A"
+                is_na_bags = str(qty_delta).strip().upper() == "N/A" # qty_delta used for both check if passed as raw
+
                 new_row = [
                     name, code, 
                     self._clean_num(qty_delta), self._clean_num(bags_delta), "PCS", 
-                    self._clean_num(qty_delta), 0.0, 
-                    self._clean_num(bags_delta), 0.0,
+                    (self._clean_num(qty_delta) if m_type == "IN" else 0.0), (self._clean_num(qty_delta) if m_type == "OUT" else 0.0), 
+                    (self._clean_num(bags_delta) if m_type == "IN" else 0.0), (self._clean_num(bags_delta) if m_type == "OUT" else 0.0),
                     now.strftime("%Y-%m-%d %H:%M:%S")
                 ]
                 self._append_row("Stock Summary", new_row)
