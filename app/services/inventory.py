@@ -721,14 +721,14 @@ class InventoryService:
         
         # 2. Execute movement within distributions
         for dist in distributions:
+            # Determine if it's a bag-based item (Checked per distribution for robustness)
+            unit_str = str(dist.get('unit_type', 'PCS')).lower()
+            is_bag_item = 'bag' in unit_str
+
             if dist.get('dist_id') == from_dist_id:
                 source_dist = dist # Track for new dist creation fallback
                 
-                # Determine if it's a bag-based item
-                unit_str = str(dist.get('unit_type', 'PCS')).lower()
-                is_bag_item = 'bag' in unit_str
-                
-                    # Qty Logic: Preserve N/A string if original was N/A
+                # Qty Logic: Preserve N/A string if original was N/A
                 s_qty_val = dist.get('qty', 0)
                 if str(s_qty_val).strip() == "N/A":
                     dist['qty'] = "N/A"
@@ -744,7 +744,6 @@ class InventoryService:
                         
                         adj_qty = bags_to_move
                         dist['qty'] = curr_qty - adj_qty
-                        if 'bags' in dist: del dist['bags'] # Cleanup redundant field
                     else:
                         adj_qty = qty
                         dist['qty'] = curr_qty - adj_qty
@@ -753,20 +752,9 @@ class InventoryService:
                     if adj_qty > 0 and curr_qty < adj_qty - 0.001:
                         raise Exception(f"Insufficient stock in source position (Has {curr_qty}, Needs {adj_qty}).")
                 
-                # Bags Logic: Preserve N/A string
-                s_bags_val = dist.get('bags', 0)
-                if str(s_bags_val).strip() == "N/A":
-                    dist['bags'] = "N/A"
-                else:
-                    curr_bags = float(s_bags_val)
-                    # SELF-HEALING: If it's a bag item but bags field is 0 while qty exists, use qty as bags
-                    if is_bag_item and curr_bags == 0 and s_qty_val != "N/A" and float(s_qty_val) > 0:
-                        curr_bags = float(s_qty_val)
-
-                    if bags_to_move > 0 and curr_bags < bags_to_move - 0.001:
-                        bags_to_move = curr_bags
-                    dist['bags'] = max(0, curr_bags - bags_to_move)
-
+                # [SCHEMA-STRICT] Wipe bags if it's a bag item
+                if is_bag_item and 'bags' in dist: del dist['bags']
+                
                 source_found = True
             
             # Check if destination exists
@@ -781,22 +769,24 @@ class InventoryService:
                     d_bags_val = float(dist.get('bags', 0))
                     
                     # [FIX] Force 1:1 sync for bag items 
-                    if 'bag' in d_unit_type:
+                    if is_bag_item: # Use the loop-scoped variable
                         # Robust Truth Discovery
                         d_source_truth = d_bags_val if d_bags_val > 0 else float(d_qty_val)
                         if float(d_qty_val) != d_source_truth or d_bags_val != d_source_truth:
                             d_qty_val = d_source_truth
-                            dist['bags'] = d_source_truth # Heal destination if needed
                         d_adj_qty = bags_to_move
 
                     dist['qty'] = float(d_qty_val) + d_adj_qty
                 
-                # Handle Bags logic for destination
-                d_bags_val = dist.get('bags', 0)
-                if str(d_bags_val).strip() == "N/A":
-                    dist['bags'] = "N/A"
+                if is_bag_item:
+                    if 'bags' in dist: del dist['bags']
                 else:
-                    dist['bags'] = float(d_bags_val) + bags_to_move
+                    # Handle Bags logic for non-bag destination
+                    d_bags_val = dist.get('bags', 0)
+                    if str(d_bags_val).strip() == "N/A":
+                        dist['bags'] = "N/A"
+                    else:
+                        dist['bags'] = float(d_bags_val) + bags_to_move
                 dest_found = True
             
             new_distributions.append(dist)
