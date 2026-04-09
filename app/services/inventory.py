@@ -188,12 +188,11 @@ class InventoryService:
 
         doc_data = {
             'doc_id': doc_ref.id, 
-            'barcode_id': barcode_id, # Latest barcode as primary ref
+            'barcode_id': barcode_id, 
             'barcode_ids': barcode_ids,
             'product_name': product_name,
             'product_code': product_code,
-            'unit': unit,
-            'total_qty': total_qty,
+            'qty': total_qty, # Unified key
             'distributions': merged_dists,
             'location_ids': list(set([l for l in search_locations if l])),
             'min_stock_level': existing_data.get('min_stock_level', 0),
@@ -205,9 +204,21 @@ class InventoryService:
             'updated_by': user_name,
             'updated_at': int(time.time()),
             'is_merged': is_merged,
-            'sync_status': 'pending', # 🆕 Track for Sheets sync
+            'sync_status': 'pending',
             'last_sync_error': None
         }
+
+        # [SCHEMA-STRICT] Remove redundant unit if N/A or bag-based
+        if unit and str(unit).upper() != "N/A" and not is_item_bag_based:
+            doc_data['unit'] = unit
+        
+        # [SCHEMA-STRICT] Remove redundant numeric field if identical
+        if is_item_bag_based:
+            doc_data['total_qty'] = total_qty
+            if 'number_of_bags' in doc_data: del doc_data['number_of_bags']
+        else:
+            doc_data['total_qty'] = total_qty
+            doc_data['number_of_bags'] = total_bags
         
         # If existing doc has a barcode link, keep it (unless we want to overwrite with newest)
         if existing_data.get('barcode_link'):
