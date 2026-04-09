@@ -689,7 +689,8 @@ class InventoryService:
                 source_dist = dist # Track for new dist creation fallback
                 
                 # Determine if it's a bag-based item
-                is_bag_item = str(dist.get('unit_type', 'PCS')).lower().contains('bag')
+                unit_str = str(dist.get('unit_type', 'PCS')).lower()
+                is_bag_item = 'bag' in unit_str
                 
                 # Qty Logic: Preserve N/A string if original was N/A
                 s_qty_val = dist.get('qty', 0)
@@ -730,7 +731,8 @@ class InventoryService:
                     dist['qty'] = "N/A"
                 else:
                     d_adj_qty = qty
-                    if str(dist.get('unit_type', 'PCS')).lower().contains('bag') and d_adj_qty <= 0:
+                    d_unit_type = str(dist.get('unit_type', 'PCS')).lower()
+                    if 'bag' in d_unit_type and d_adj_qty <= 0:
                         d_adj_qty = bags_to_move
                     dist['qty'] = float(d_qty_val) + d_adj_qty
                 
