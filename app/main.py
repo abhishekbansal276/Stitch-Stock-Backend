@@ -795,9 +795,7 @@ async def transfer_stock_position(req: StockTransferRequest, user: dict = Depend
                 'from_location': req.from_location_name,
                 'to_location': req.to_location_name,
                 'qty': float(req.quantity),
-                'bags': "N/A" if is_bag_item else bags_to_move, # [SCHEMA-ALIGNED] Prevent duplicate metrics for bags
-                'unit': f_item.get('unit', 'QTY'),
-                'unit_type': from_dist.get('unit_type') if from_dist else f_item.get('unit', 'QTY'),
+                'unit_type': from_dist.get('unit_type') if from_dist else f_item.get('unit_type', 'QTY'),
                 'actor_name': user_display,
                 'created_at': int(time.time()),
                 'type': 'RELOCATE'
