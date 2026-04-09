@@ -1619,24 +1619,27 @@ class SheetsService:
 
                 # 3. Update Stock Register Row
                 qty_col = self._get_col_letter(h.get("Quantity Received", 7))
+                unit_col = self._get_col_letter(h.get("Unit", 8))
                 bags_col = self._get_col_letter(h.get("Number of Bags", 9))
+                st_col = self._get_col_letter(h.get("Storage Type", 10))
                 updated_at_col = self._get_col_letter(h.get("Updated At", 24))
                 updated_by_col = self._get_col_letter(h.get("Updated By", 25))
 
-                # Fetch current qty and bags with targeted single-cell reads for accuracy
-                qty_res = self.service.spreadsheets().values().get(
+                # Fetch row context (Qty, Unit, Bags, Storage Type) for healing and N/A logic
+                reg_res = self.service.spreadsheets().values().get(
                     spreadsheetId=self.spreadsheet_id,
-                    range=f"Stock Register!{qty_col}{row_idx}"
+                    range=f"Stock Register!{qty_col}{row_idx}:{st_col}{row_idx}"
                 ).execute()
-                bags_res = self.service.spreadsheets().values().get(
-                    spreadsheetId=self.spreadsheet_id,
-                    range=f"Stock Register!{bags_col}{row_idx}"
-                ).execute()
-
-                raw_qty_res = qty_res.get("values", [["0.0"]])[0][0]
-                raw_bags_res = bags_res.get("values", [["0"]])[0][0]
+                reg_values = reg_res.get("values", [[]])[0]
                 
-                is_qty_na = str(raw_qty_res).strip().upper() == "N/A"
+                raw_qty_res = reg_values[0] if len(reg_values) > 0 else "0.0"
+                raw_unit_res = reg_values[1] if len(reg_values) > 1 else ""
+                raw_bags_res = reg_values[2] if len(reg_values) > 2 else "0"
+                raw_st_res = reg_values[3] if len(reg_values) > 3 else ""
+                
+                # Check for bag-based items aggressively to prevent numeric seepage into Qty
+                is_bag_item = 'BAG' in str(raw_unit_res).upper() or str(raw_st_res).upper() == 'BAG'
+                is_qty_na = str(raw_qty_res).strip().upper() == "N/A" or is_bag_item
                 is_bags_na = str(raw_bags_res).strip().upper() == "N/A"
                 
                 curr_qty = self._to_float(raw_qty_res)
@@ -1663,10 +1666,13 @@ class SheetsService:
                 ).execute()
                 p_name = name_res.get("values", [["Unknown"]])[0][0]
                 
+                # Movement record: Force N/A for Quantity if bag item, and ensure bags count captures enterred qty
+                m_qty = "N/A" if is_qty_na else self._clean_num(qty)
+                m_bags = (self._clean_num(qty) if is_bag_item else self._clean_num(bags_removed)) if not is_bags_na else "N/A"
+
                 movement_row = [
                     self._get_now_ist().strftime("%Y-%m-%d %H:%M:%S"), p_name, "OUT", 
-                    "N/A" if is_qty_na else self._clean_num(qty), 
-                    "N/A" if is_bags_na else self._clean_num(bags_removed), 
+                    m_qty, m_bags, 
                     warehouse, location, user_display,
                     f"MOV-{int(time.time())}", barcode_id, f"DISP-{uuid.uuid4().hex[:4].upper()}", dist_id, warehouse_id
                 ]
@@ -1683,12 +1689,12 @@ class SheetsService:
                     p_code = code_res.get("values", [[""]])[0][0]
                 
                 if p_code:
-                    # _update_summary_row is called within the lock context to prevent duplicate rows
+                    # _update_summary_row: consistent N/A propagation to the dashboard stats
                     self._update_summary_row(
                         p_name, p_code, 
-                        "N/A" if is_qty_na else -qty, 
+                        m_qty, 
                         "OUT", 
-                        bags_delta="N/A" if is_bags_na else -bags_removed
+                        bags_delta=m_bags
                     )
 
                 print(f"✅ Sheets Sync: Deducted {qty} of {p_name} ({barcode_id})")
@@ -1772,8 +1778,8 @@ class SheetsService:
                 new_row = [
                     name, code, 
                     self._clean_num(qty_delta), self._clean_num(bags_delta), "PCS", 
-                    (self._clean_num(qty_delta) if m_type == "IN" else 0.0), (self._clean_num(qty_delta) if m_type == "OUT" else 0.0), 
-                    (self._clean_num(bags_delta) if m_type == "IN" else 0.0), (self._clean_num(bags_delta) if m_type == "OUT" else 0.0),
+                    (self._clean_num(qty_delta) if m_type == "IN" else "N/A" if is_na_qty else 0.0), (self._clean_num(qty_delta) if m_type == "OUT" else "N/A" if is_na_qty else 0.0), 
+                    (self._clean_num(bags_delta) if m_type == "IN" else "N/A" if is_na_bags else 0.0), (self._clean_num(bags_delta) if m_type == "OUT" else "N/A" if is_na_bags else 0.0),
                     now.strftime("%Y-%m-%d %H:%M:%S")
                 ]
                 self._append_row("Stock Summary", new_row)
@@ -1794,14 +1800,14 @@ class SheetsService:
                 is_na_bags = (str(raw_bags).upper() == "N/A") or (str(bags_delta).upper() == "N/A")
 
                 if is_na_qty:
-                    new_bal = "N/A"; new_in_qty = "N/A" if m_type == "IN" else curr_in_qty; new_out_qty = "N/A" if m_type == "OUT" else curr_out_qty
+                    new_bal = "N/A"; new_in_qty = "N/A"; new_out_qty = "N/A"
                 else:
                     new_bal = max(0.0, round(curr_bal + qty_delta, 4))
                     new_in_qty = round(curr_in_qty + (max(0, qty_delta) if m_type == "IN" else 0.0), 4)
                     new_out_qty = round(curr_out_qty + (abs(min(0, qty_delta)) if m_type == "OUT" else 0.0), 4)
 
                 if is_na_bags:
-                    new_bags = "N/A"; new_in_bags = "N/A" if m_type == "IN" else curr_in_bags; new_out_bags = "N/A" if m_type == "OUT" else curr_out_bags
+                    new_bags = "N/A"; new_in_bags = "N/A"; new_out_bags = "N/A"
                 else:
                     target_bags_delta = float(bags_delta if not str(bags_delta).upper() == "N/A" else 0)
                     new_bags = max(0, int(round(curr_bags + target_bags_delta)))
