@@ -683,22 +683,45 @@ class InventoryService:
         # 2. Execute movement within distributions
         for dist in distributions:
             if dist.get('dist_id') == from_dist_id:
-                curr_qty = float(dist.get('qty', 0))
-                curr_bags = float(dist.get('bags', 0))
-                if qty > 0 and curr_qty < qty - 0.001:
-                    raise Exception(f"Insufficient stock in source position (Has {curr_qty}, Needs {qty}).")
+                source_dist = dist # Track for new dist creation fallback
                 
-                if bags_to_move > 0 and curr_bags < bags_to_move - 0.001:
-                    bags_to_move = curr_bags # Cap to what is available at source
+                # Qty Logic: Preserve N/A string if original was N/A
+                s_qty_val = dist.get('qty', 0)
+                if str(s_qty_val).strip() == "N/A":
+                    dist['qty'] = "N/A"
+                else:
+                    curr_qty = float(s_qty_val)
+                    if qty > 0 and curr_qty < qty - 0.001:
+                        raise Exception(f"Insufficient stock in source position (Has {curr_qty}, Needs {qty}).")
+                    dist['qty'] = curr_qty - qty
                 
-                dist['qty'] = curr_qty - qty
-                dist['bags'] = max(0, curr_bags - bags_to_move)
+                # Bags Logic: Preserve N/A string
+                s_bags_val = dist.get('bags', 0)
+                if str(s_bags_val).strip() == "N/A":
+                    dist['bags'] = "N/A"
+                else:
+                    curr_bags = float(s_bags_val)
+                    if bags_to_move > 0 and curr_bags < bags_to_move - 0.001:
+                        bags_to_move = curr_bags
+                    dist['bags'] = max(0, curr_bags - bags_to_move)
+
                 source_found = True
             
-            # Check if destination exists (Warehouse matches AND Location matches)
+            # Check if destination exists
             if dist.get('warehouse') == to_warehouse and dist.get('location') == to_location:
-                dist['qty'] = float(dist.get('qty', 0)) + qty
-                dist['bags'] = float(dist.get('bags', 0)) + bags_to_move
+                # Handle Qty logic for destination
+                d_qty_val = dist.get('qty', 0)
+                if str(d_qty_val).strip() == "N/A":
+                    dist['qty'] = "N/A"
+                else:
+                    dist['qty'] = float(d_qty_val) + qty
+                
+                # Handle Bags logic for destination
+                d_bags_val = dist.get('bags', 0)
+                if str(d_bags_val).strip() == "N/A":
+                    dist['bags'] = "N/A"
+                else:
+                    dist['bags'] = float(d_bags_val) + bags_to_move
                 dest_found = True
             
             new_distributions.append(dist)
@@ -707,21 +730,32 @@ class InventoryService:
             raise Exception(f"Source Position ID {from_dist_id} not found.")
 
         if not dest_found:
-            # Create new distribution ID using standard 12-digit hash for consistency
             clean_code = normalize_id(data.get('product_code', 'UNKNOWN'))
             batch_ref = source_dist.get('batch_number', 'NB') if source_dist else 'NB'
             seed = f"{clean_code}-{to_warehouse}-{to_location}-{batch_ref}"
             new_dist_id = generate_12_digit_hash(seed)
+            
+            # Use "N/A" if source was "N/A"
+            final_qty = "N/A" if str(source_dist.get('qty')).strip() == "N/A" else qty
+            final_bags = "N/A" if str(source_dist.get('bags')).strip() == "N/A" else bags_to_move
+            
             new_distributions.append({
                 'warehouse': to_warehouse, 
                 'location': to_location, 
-                'qty': qty, 
-                'bags': bags_to_move,
+                'qty': final_qty, 
+                'bags': final_bags,
                 'dist_id': new_dist_id,
                 'batch_number': batch_ref
             })
 
-        cleaned_distributions = [d for d in new_distributions if float(d.get('qty', 0)) > 0.001]
+        # Cleanup: Only remove if numeric and <= 0. Keep "N/A" strings.
+        cleaned_distributions = []
+        for d in new_distributions:
+            v = d.get('qty', 0)
+            if str(v).strip() == "N/A":
+                cleaned_distributions.append(d)
+            elif float(v) > 0.001:
+                cleaned_distributions.append(d)
         
         # 3. Recalculate location search index (Single Clean Pass)
         search_locations = []
