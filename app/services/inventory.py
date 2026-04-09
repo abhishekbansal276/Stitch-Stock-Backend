@@ -488,7 +488,7 @@ class InventoryService:
             new_bags = new_total
         else:
             new_bags = float(max(0, old_bags - bags_removed))
-        
+         
         # Update searchable locations index
         search_locations = []
         for d in new_distributions:

@@ -1632,18 +1632,26 @@ class SheetsService:
                     spreadsheetId=self.spreadsheet_id,
                     range=f"Stock Register!{bags_col}{row_idx}"
                 ).execute()
-                curr_qty = self._to_float(qty_res.get("values", [[0]])[0][0])
-                curr_bags = self._to_float(bags_res.get("values", [[0]])[0][0])
+
+                raw_qty_res = qty_res.get("values", [["0.0"]])[0][0]
+                raw_bags_res = bags_res.get("values", [["0"]])[0][0]
                 
-                new_qty = max(0.0, curr_qty - qty)
-                new_bags = max(0, int(round(curr_bags)) - int(round(bags_removed)))
+                is_qty_na = str(raw_qty_res).strip().upper() == "N/A"
+                is_bags_na = str(raw_bags_res).strip().upper() == "N/A"
+                
+                curr_qty = self._to_float(raw_qty_res)
+                curr_bags = self._to_float(raw_bags_res)
+                
+                # Logic: If it was N/A in register, it stays N/A. Otherwise subtract.
+                new_qty = "N/A" if is_qty_na else max(0.0, curr_qty - qty)
+                new_bags = "N/A" if is_bags_na else max(0, int(round(curr_bags)) - int(round(bags_removed)))
 
                 # Batch update the row
                 self.service.spreadsheets().values().batchUpdate(
                     spreadsheetId=self.spreadsheet_id,
                     body={"valueInputOption": "USER_ENTERED", "data": [
-                        {"range": f"Stock Register!{qty_col}{row_idx}", "values": [[self._clean_num(new_qty)]]},
-                        {"range": f"Stock Register!{bags_col}{row_idx}", "values": [[int(round(new_bags))]]},
+                        {"range": f"Stock Register!{qty_col}{row_idx}", "values": [[new_qty if is_qty_na else self._clean_num(new_qty)]]},
+                        {"range": f"Stock Register!{bags_col}{row_idx}", "values": [[new_bags if is_bags_na else int(round(new_bags))]]},
                         {"range": f"Stock Register!{updated_at_col}{row_idx}:{updated_by_col}{row_idx}", "values": [[self._get_now_ist().strftime("%Y-%m-%d %H:%M:%S"), user_display]]}
                     ]}
                 ).execute()
@@ -1657,7 +1665,8 @@ class SheetsService:
                 
                 movement_row = [
                     self._get_now_ist().strftime("%Y-%m-%d %H:%M:%S"), p_name, "OUT", 
-                    self._clean_num(qty), self._clean_num(bags_removed), 
+                    "N/A" if is_qty_na else self._clean_num(qty), 
+                    "N/A" if is_bags_na else self._clean_num(bags_removed), 
                     warehouse, location, user_display,
                     f"MOV-{int(time.time())}", barcode_id, f"DISP-{uuid.uuid4().hex[:4].upper()}", dist_id, warehouse_id
                 ]
@@ -1675,7 +1684,12 @@ class SheetsService:
                 
                 if p_code:
                     # _update_summary_row is called within the lock context to prevent duplicate rows
-                    self._update_summary_row(p_name, p_code, -qty, "OUT", bags_delta=-bags_removed)
+                    self._update_summary_row(
+                        p_name, p_code, 
+                        "N/A" if is_qty_na else -qty, 
+                        "OUT", 
+                        bags_delta="N/A" if is_bags_na else -bags_removed
+                    )
 
                 print(f"✅ Sheets Sync: Deducted {qty} of {p_name} ({barcode_id})")
             except Exception as e:

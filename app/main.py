@@ -760,7 +760,7 @@ async def transfer_stock_position(req: StockTransferRequest, user: dict = Depend
         try:
             # Record in Sheets Movements ledger as RELOCATE
             sheets_service.record_relocation(
-                barcode_id=req.barcode_id,
+                barcode_id=f_item.get('barcode_id', req.barcode_id),
                 qty=final_qty_log,
                 bags=final_bags_log,
                 from_location=req.from_location_name,
@@ -792,6 +792,7 @@ async def transfer_stock_position(req: StockTransferRequest, user: dict = Depend
             relocation_data = {
                 'product_name': f_item.get('product_name', 'Stock Item'),
                 'product_code': f_item.get('product_code', req.barcode_id),
+                'barcode_id': f_item.get('barcode_id', req.barcode_id),
                 'from_location': req.from_location_name,
                 'to_location': req.to_location_name,
                 'qty': float(req.quantity),
