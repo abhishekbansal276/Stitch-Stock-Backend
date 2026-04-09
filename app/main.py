@@ -720,6 +720,15 @@ async def transfer_stock_position(req: StockTransferRequest, user: dict = Depend
             ratio = req.quantity / current_qty
             bags_to_move = int(round(current_bags * ratio))
 
+        # Determine if we should record "N/A" for metrics in sheets log
+        final_qty_log = req.quantity
+        final_bags_log = bags_to_move
+        
+        if storage_type == 'BAG' or str(f_item.get('unit')).upper() == 'BAGS':
+            final_qty_log = "N/A"
+        elif storage_type == 'UNIT':
+            final_bags_log = "N/A"
+
         # 1. Update Firestore Atomic Map (Internal distributions)
         inventory_service.transfer_stock(
             req.barcode_id, req.from_location, req.to_location, req.to_location_name, req.quantity, bags=bags_to_move
@@ -732,8 +741,8 @@ async def transfer_stock_position(req: StockTransferRequest, user: dict = Depend
             # Record in Sheets Movements ledger as RELOCATE
             sheets_service.record_relocation(
                 barcode_id=req.barcode_id,
-                qty=req.quantity,
-                bags=bags_to_move,
+                qty=final_qty_log,
+                bags=final_bags_log,
                 from_location=req.from_location_name,
                 to_location=req.to_location_name,
                 user_display=user_display,

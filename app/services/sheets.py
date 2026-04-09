@@ -1632,7 +1632,7 @@ class SheetsService:
                 print(f"Sheets Record Dispatch Error: {e}")
                 traceback.print_exc()
 
-    def record_relocation(self, barcode_id: str, qty: float, bags: float = 0, 
+    def record_relocation(self, barcode_id: str, qty: any, bags: any = 0, 
                           from_location: str = "", to_location: str = "", 
                           user_display: str = "System", product_name: str = "Generic Item",
                           dist_id: str = "default"):
