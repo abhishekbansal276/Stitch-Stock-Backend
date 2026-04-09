@@ -99,7 +99,8 @@ class InventoryService:
             # Ensure incoming dist has an ID and a local batch reference
             batch_ref = new_d.get('batch_number') or batch_number or 'NB'
             if not new_d.get('dist_id') or new_d.get('dist_id') == 'AUTO':
-                seed = f"{barcode_id}-{new_d.get('warehouse')}-{new_d.get('location')}-{batch_ref}"
+                # Deterministic seed based on product, location and batch
+                seed = f"{clean_code}-{new_d.get('warehouse')}-{new_d.get('location')}-{batch_ref}"
                 new_d['dist_id'] = generate_12_digit_hash(seed)
             
             # If the incoming distribution doesn't have a batch, use the parent one
@@ -645,7 +646,9 @@ class InventoryService:
 
         if not dest_found:
             # Create new distribution ID using standard 12-digit hash for consistency
-            seed = f"TRANS-{from_dist_id}-{to_warehouse}-{to_location}-{int(time.time())}"
+            clean_code = normalize_id(data.get('product_code', 'UNKNOWN'))
+            batch_ref = source_dist.get('batch_number', 'NB') if source_dist else 'NB'
+            seed = f"{clean_code}-{to_warehouse}-{to_location}-{batch_ref}"
             new_dist_id = generate_12_digit_hash(seed)
             new_distributions.append({
                 'warehouse': to_warehouse, 
@@ -653,7 +656,7 @@ class InventoryService:
                 'qty': qty, 
                 'bags': bags_to_move,
                 'dist_id': new_dist_id,
-                'batch_number': source_dist.get('batch_number', 'NB') if source_dist else 'NB'
+                'batch_number': batch_ref
             })
 
         cleaned_distributions = [d for d in new_distributions if float(d.get('qty', 0)) > 0.001]
