@@ -1378,6 +1378,29 @@ class SheetsService:
         except Exception as e:
             print(f"Add movement error: {e}")
 
+    def record_relocation(self, barcode_id: str, qty: any, bags: any, 
+                          from_location: str, to_location: str, 
+                          from_warehouse: str, to_warehouse: str,
+                          user_display: str, product_name: str):
+        """Dedicated wrapper for relocation audit in Google Sheets."""
+        if not self.service: return
+        
+        # Use add_movement but with a specific RELOCATE formatting
+        # We record the move as a single event "From -> To" in the location column
+        loc_audit = f"{from_location} ➔ {to_location}"
+        
+        self.add_movement(
+            barcode_id=barcode_id,
+            trans_id="RELOC",
+            move_type="RELOCATE",
+            qty=qty,
+            bags_qty=bags,
+            warehouse=to_warehouse,
+            location=loc_audit,
+            user_display=user_display,
+            item_name=product_name
+        )
+
     # ── READ HELPERS ──────────────────────────────────────────────────────────
 
     def update_barcode_link(self, barcode_id: str, link: str):
@@ -1730,7 +1753,7 @@ class SheetsService:
 
                 # N/A Aware Logic for New Row
                 is_na_qty = str(qty_delta).strip().upper() == "N/A"
-                is_na_bags = str(qty_delta).strip().upper() == "N/A" # qty_delta used for both check if passed as raw
+                is_na_bags = str(bags_delta).strip().upper() == "N/A"
 
                 new_row = [
                     name, code, 
@@ -1766,9 +1789,10 @@ class SheetsService:
                 if is_na_bags:
                     new_bags = "N/A"; new_in_bags = "N/A" if m_type == "IN" else curr_in_bags; new_out_bags = "N/A" if m_type == "OUT" else curr_out_bags
                 else:
-                    new_bags = max(0, int(round(curr_bags + bags_delta)))
-                    new_in_bags = int(curr_in_bags + (max(0, bags_delta) if m_type == "IN" else 0.0))
-                    new_out_bags = int(curr_out_bags + (abs(min(0, bags_delta)) if m_type == "OUT" else 0.0))
+                    target_bags_delta = float(bags_delta if not str(bags_delta).upper() == "N/A" else 0)
+                    new_bags = max(0, int(round(curr_bags + target_bags_delta)))
+                    new_in_bags = int(curr_in_bags + (max(0, target_bags_delta) if m_type == "IN" else 0.0))
+                    new_out_bags = int(curr_out_bags + (abs(min(0, target_bags_delta)) if m_type == "OUT" else 0.0))
                 
                 update_range = f"Stock Summary!C{found_idx}:J{found_idx}"
                 row_vals = [
