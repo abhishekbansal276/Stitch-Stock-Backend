@@ -17,7 +17,7 @@ from app.services.inventory import inventory_service
 from app.services.location_service import location_service
 from app.services.activity_service import activity_service
 from app.services.google_drive_service import drive_service
-from app.utils import generate_12_digit_hash, normalize_id
+from app.utils import generate_12_digit_hash, normalize_id, safe_float, safe_int
 from app.dependencies.auth import get_current_user, require_admin, require_staff
 from app.models.stock import StockTransferRequest
 
@@ -351,14 +351,14 @@ async def _process_async_ingestion(header: dict, items: list, item_ids: list, us
                     supplier_name=header.get('Supplier Name'),
                     batch_number=item_data.get('batch_number') or item_data.get('Batch Number'),
                     storage_type=item_data.get('storage_type', 'UNIT'),
-                    number_of_bags=item_data.get('number_of_bags') or item_data.get('Number of Bags', 0),
+                    number_of_bags=safe_int(item_data.get('number_of_bags') or item_data.get('Number of Bags', 0)),
                     user_name=user_display,
                     is_merged=item_data.get('is_merged', False)
                 )
                 doc_ids_to_sync.append(d_id)
                 
                 # Accumulate for Log
-                item_qty = float(item_data.get('Quantity Received', 0))
+                item_qty = safe_float(item_data.get('Quantity Received', 0))
                 total_qty_combined += item_qty
                 log_details.append({
                     'product_name': item_data.get('Product Name'),

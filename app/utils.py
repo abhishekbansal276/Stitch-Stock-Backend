@@ -37,3 +37,21 @@ def generate_12_digit_hash(seed: str) -> str:
     
     # Get 12 digits (modulo 10^12) and zero-pad
     return str(numeric_hash % 10**12).zfill(12)
+
+def safe_float(val) -> float:
+    """Safely converts a value to float, handling 'N/A' and other non-numeric strings."""
+    try:
+        if isinstance(val, str) and val.strip().upper() == "N/A":
+            return 0.0
+        return float(val or 0.0)
+    except:
+        return 0.0
+
+def safe_int(val) -> int:
+    """Safely converts a value to int, handling 'N/A' and numeric strings with decimals."""
+    try:
+        if isinstance(val, str) and val.strip().upper() == "N/A":
+            return 0
+        return int(float(val or 0)) # float first to handle cases like "10.0"
+    except:
+        return 0

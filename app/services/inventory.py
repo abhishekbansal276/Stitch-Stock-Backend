@@ -6,7 +6,7 @@ from app.services.firebase import db
 from google.cloud.firestore_v1.base_query import FieldFilter
 from google.cloud import firestore
 from app.services.email_service import email_service
-from app.utils import generate_12_digit_hash, normalize_id
+from app.utils import generate_12_digit_hash, normalize_id, safe_float, safe_int
 
 class InventoryService:
     def __init__(self):
@@ -116,11 +116,11 @@ class InventoryService:
                     break
             
             if found_idx >= 0:
-                merged_dists[found_idx]['qty'] = float(merged_dists[found_idx].get('qty', 0)) + float(new_d.get('qty', 0))
+                merged_dists[found_idx]['qty'] = safe_float(merged_dists[found_idx].get('qty', 0)) + safe_float(new_d.get('qty', 0))
                 if 'bags' in new_d:
                     old_bags = merged_dists[found_idx].get('bags', 0)
                     new_bags = new_d.get('bags', 0)
-                    merged_dists[found_idx]['bags'] = int(old_bags) + int(new_bags)
+                    merged_dists[found_idx]['bags'] = safe_int(old_bags) + safe_int(new_bags)
             else:
                 merged_dists.append(new_d)
 
@@ -133,8 +133,8 @@ class InventoryService:
             if key not in consolidated:
                 consolidated[key] = d
             else:
-                consolidated[key]['qty'] = float(consolidated[key].get('qty', 0)) + float(d.get('qty', 0))
-                consolidated[key]['bags'] = int(consolidated[key].get('bags', 0)) + int(d.get('bags', 0))
+                consolidated[key]['qty'] = safe_float(consolidated[key].get('qty', 0)) + safe_float(d.get('qty', 0))
+                consolidated[key]['bags'] = safe_int(consolidated[key].get('bags', 0)) + safe_int(d.get('bags', 0))
         
         merged_dists = list(consolidated.values())
 
@@ -144,9 +144,9 @@ class InventoryService:
                 d['batch_number'] = batch_number or 'NB'
 
         # ── 3. FINALIZE DATA ──
-        total_qty = sum(float(d.get('qty', 0)) for d in merged_dists)
+        total_qty = sum(safe_float(d.get('qty', 0)) for d in merged_dists)
         # Bag count is now derived from the consolidated distributions for truth
-        total_bags = sum(int(d.get('bags', 0)) for d in merged_dists)
+        total_bags = sum(safe_int(d.get('bags', 0)) for d in merged_dists)
         
         # Track all barcode IDs associated with this document
         barcode_ids = existing_data.get('barcode_ids', [])
@@ -156,7 +156,7 @@ class InventoryService:
         # Search index calculation (Human-Readable only)
         search_locations = []
         for d in merged_dists:
-            if float(d.get('qty', 0)) > 0:
+            if safe_float(d.get('qty', 0)) > 0:
                 wh = d.get('warehouse')
                 zn = d.get('location')
                 if wh: search_locations.append(wh)

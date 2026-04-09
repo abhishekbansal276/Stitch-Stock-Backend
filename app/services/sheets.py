@@ -1060,8 +1060,13 @@ class SheetsService:
                     item_id = str(item_ids[i]).strip()
                     name = str(item.get("Product Name") or header.get("Product Name") or "Unknown Item").strip()
                     code = str(item.get("Product Code") or header.get("Product Code") or item_id[:8]).strip()
-                    qty  = self._to_float(item.get("Quantity Received") or header.get("Quantity Received") or 0)
-                    bags = self._to_float(item.get("Number of Bags") or item.get("bags") or 0)
+                    
+                    # [NEW] Handle N/A Availability
+                    raw_qty = item.get("Quantity Received") or header.get("Quantity Received") or 0
+                    raw_bags = item.get("Number of Bags") or item.get("bags") or 0
+                    
+                    qty  = self._to_float(raw_qty)
+                    bags = self._to_float(raw_bags)
                     unit = str(item.get("Unit") or header.get("Unit") or "PCS").strip()
 
                     # Safety: Skip 'Ghost' entries
@@ -1103,10 +1108,10 @@ class SheetsService:
                         
                         row_data[h["Product Name"]] = name
                         row_data[h["Product Code"]] = code
-                        row_data[h["Quantity Received"]] = self._clean_num(qty)
+                        row_data[h["Quantity Received"]] = "N/A" if raw_qty == "N/A" else self._clean_num(qty)
                         row_data[h["Unit"]] = unit
                         row_data[h["Batch Number"]] = str(item.get("Batch Number", "")).strip()
-                        row_data[h["Number of Bags"]] = int(round(bags))
+                        row_data[h["Number of Bags"]] = "N/A" if raw_bags == "N/A" else int(round(bags))
                         row_data[h["Storage Type"]] = item.get("storage_type") or "UNIT"
                         row_data[h["Barcode ID"]] = item_id
                         row_data[h["Created At"]] = int(now.timestamp())
@@ -1519,11 +1524,14 @@ class SheetsService:
                 self._append_row("Stock Movements", movement_row)
 
                 # 3. Update Summary
-                code_res = self.service.spreadsheets().values().get(
-                    spreadsheetId=self.spreadsheet_id,
-                    range=f"Stock Register!{self._get_col_letter(h.get('Product Code', 5))}{row_idx}"
-                ).execute()
-                p_code = code_res.get("values", [[""]])[0][0]
+                # Prioritize the product_code passed from the API for robustness
+                p_code = product_code
+                if not p_code:
+                    code_res = self.service.spreadsheets().values().get(
+                        spreadsheetId=self.spreadsheet_id,
+                        range=f"Stock Register!{self._get_col_letter(h.get('Product Code', 5))}{row_idx}"
+                    ).execute()
+                    p_code = code_res.get("values", [[""]])[0][0]
                 
                 if p_code:
                     # _update_summary_row is called within the lock context to prevent duplicate rows
@@ -1673,13 +1681,17 @@ class SheetsService:
         except Exception:
             return 0.0
 
-    def _clean_num(self, val: float) -> any:
+    def _clean_num(self, val) -> any:
         """Removes trailing .0 but keeps other decimals for professional Sheets look."""
         if val is None: return 0
-        v = round(float(val), 4)
-        if v == int(v):
-            return int(v)
-        return v
+        if str(val).strip() == "N/A": return "N/A" # [NEW]
+        try:
+            v = round(float(val), 4)
+            if v == int(v):
+                return int(v)
+            return v
+        except:
+            return str(val)
 
 
     def refresh_styles(self, title: str):
