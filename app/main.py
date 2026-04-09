@@ -19,7 +19,7 @@ from app.services.activity_service import activity_service
 from app.services.google_drive_service import drive_service
 from app.utils import generate_12_digit_hash, normalize_id
 from app.dependencies.auth import get_current_user, require_admin, require_staff
-from app.models.stock import StockTransferRequest, StockRemovalRequest
+from app.models.stock import StockTransferRequest
 
 # Load environment variables for local development
 load_dotenv()
@@ -519,21 +519,19 @@ async def get_stock_item(
 @app.post("/stock/{stock_item_id}/remove")
 async def remove_stock(
     stock_item_id: str,
-    request: StockRemovalRequest,
-    background_tasks: BackgroundTasks,
-    auth: dict = Depends(verify_token)
+    payload: dict,
+    user: dict = Depends(get_current_user)
 ):
     """
     Deduct quantity from a stock item and record the spatial movement.
     """
     try:
-        qty_to_remove = request.quantity
-        bags_removed = request.bags_removed
-        loc_id = request.loc_id
-        loc_name = request.location
-        usage = request.usage
-        remarks = request.remarks
-        user = auth
+        qty_to_remove = float(payload.get('quantity', 0))
+        bags_removed = float(payload.get('bags_removed', 0))
+        loc_id = payload.get('loc_id', 'default')
+        loc_name = payload.get('location', 'Main Floor')
+        usage = payload.get('usage', 'General')
+        remarks = payload.get('remarks', '')
         
         print(f"📉 [REMOVE_START] ID: {stock_item_id} | Qty: {qty_to_remove} | Loc: {loc_name}")
 
@@ -559,20 +557,21 @@ async def remove_stock(
             print(f"⚠️ [REMOVE_WARN] Item {stock_item_id} not found in any source.")
             raise HTTPException(status_code=404, detail="Stock item not found")
 
+        # Update 'item' variable name to 'item_details' in follow-up code
+        item = item_details
+            
         # 1. Authoritative Deduction (Backend updates Firestore & Sheet)
-        new_remaining = await inventory_service.remove_stock_spatial(
+        new_remaining = inventory_service.remove_stock_spatial(
             stock_item_id, loc_id, qty_to_remove, 
-            user=user, bags_removed=bags_removed, 
-            background_tasks=background_tasks,
-            storage_mode=request.storage_mode
+            user=user, bags_removed=bags_removed, skip_deduction=False
         )
         
         # 2. Log Activity & Notify Admins
         activity_service.log_and_notify(
             user=user,
             action_type="OUT",
-            item_name=item_details.get('item_name', 'Stock Item'),
-            product_code=item_details.get('product_code', stock_item_id),
+            item_name=item.get('item_name', 'Stock Item'),
+            product_code=item.get('product_code', stock_item_id),
             qty_change=-qty_to_remove,
             location=loc_name,
             description=remarks
