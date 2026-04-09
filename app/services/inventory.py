@@ -745,7 +745,8 @@ class InventoryService:
                 'qty': final_qty, 
                 'bags': final_bags,
                 'dist_id': new_dist_id,
-                'batch_number': batch_ref
+                'batch_number': batch_ref,
+                'unit_type': source_dist.get('unit_type', 'PCS') # [NEW] Inherit unit type
             })
 
         # Cleanup: Only remove if numeric and <= 0. Keep "N/A" strings.
