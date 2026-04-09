@@ -489,6 +489,8 @@ class InventoryService:
             # Prepare payload for potential retry
             sync_payload = {
                 "barcode_id": data.get('barcode_id', doc_id),
+                "product_code": data.get('product_code', ''),
+                "batch_number": data.get('batch_number', ''),
                 "qty": qty,
                 "bags_removed": bags_removed,
                 "warehouse": dist.get('warehouse', 'Main Floor'),

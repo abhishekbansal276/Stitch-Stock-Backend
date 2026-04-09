@@ -1447,7 +1447,10 @@ class SheetsService:
     def get_current_headers(self) -> List[str]:
         return self.BASE_SCHEMA
 
-    def record_dispatch(self, barcode_id: str, qty: float, bags_removed: float = 0, warehouse: str = "", location: str = "", user_display: str = "System", dist_id: str = "default", warehouse_id: str = "default"):
+    def record_dispatch(self, barcode_id: str, qty: float, bags_removed: float = 0, 
+                        warehouse: str = "", location: str = "", user_display: str = "System", 
+                        dist_id: str = "default", warehouse_id: str = "default",
+                        product_code: str = "", batch_number: str = ""):
         """
         Deducts stock from the spreadsheet ledger and records the movement.
         """
@@ -1457,11 +1460,19 @@ class SheetsService:
             try:
                 h = {n: i for i, n in enumerate(self.BASE_SCHEMA)}
                 b_id_idx = h.get("Barcode ID", 20)
+                
+                # 1. PRIMARY LOOKUP: Match by provided ID
                 row_idx = self._find_row_by_col(b_id_idx, barcode_id)
+                
+                # 2. FALLBACK LOOKUP: Match by Product Code + Batch Number
+                if row_idx == -1 and product_code:
+                    print(f"📡 Sheets: Primary ID {barcode_id} not found. Attempting fallback match for {product_code}-{batch_number}...")
+                    row_idx = self._find_row_by_codes(product_code, batch_number)
+                
                 if row_idx == -1:
-                    raise ValueError(f"Barcode ID {barcode_id} not found in Stock Register. Please run the Admin Janitor to reconcile.")
+                    raise ValueError(f"Stock item {product_code or barcode_id} (Batch: {batch_number or 'N/A'}) not found in Stock Register. Please run the Admin Janitor to reconcile.")
 
-                # 1. Update Stock Register Row
+                # 3. Update Stock Register Row
                 qty_col = self._get_col_letter(h.get("Quantity Received", 7))
                 bags_col = self._get_col_letter(h.get("Number of Bags", 9))
                 updated_at_col = self._get_col_letter(h.get("Updated At", 24))
@@ -1599,6 +1610,32 @@ class SheetsService:
         return datetime.utcnow() + timedelta(hours=5, minutes=30)
 
     # ── LOW-LEVEL HELPERS ─────────────────────────────────────────────────────
+
+    def _find_row_by_codes(self, product_code: str, batch_number: str) -> int:
+        """Finds a row in the Stock Register that matches both Product Code and Batch Number."""
+        if not self.service: return -1
+        try:
+            h = {n: i for i, n in enumerate(self.BASE_SCHEMA)}
+            p_code_idx = h.get("Product Code", 5)
+            batch_idx = h.get("Batch Number", 6)
+            
+            # Fetch relevant columns for search - normalization ensures robustness
+            target_p_code = normalize_id(product_code)
+            target_batch = normalize_id(batch_number)
+            
+            res = self.service.spreadsheets().values().get(
+                spreadsheetId=self.spreadsheet_id, range="Stock Register!A:G"
+            ).execute().get("values", [])
+            
+            for i, row in enumerate(res):
+                if len(row) > max(p_code_idx, batch_idx):
+                    row_p_code = normalize_id(row[p_code_idx])
+                    row_batch = normalize_id(row[batch_idx])
+                    if row_p_code == target_p_code and row_batch == target_batch:
+                        return i + 1
+        except Exception as e:
+            print(f"Sheets Find Row by Codes Error: {e}")
+        return -1
 
     def _find_row_by_col(self, col_idx: int, value: str, sheet_name: str = "Stock Register") -> int:
         if not self.service:

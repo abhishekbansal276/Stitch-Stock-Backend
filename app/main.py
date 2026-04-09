@@ -535,10 +535,30 @@ async def remove_stock(
         
         print(f"📉 [REMOVE_START] ID: {stock_item_id} | Qty: {qty_to_remove} | Loc: {loc_name}")
 
-        item = sheets_service.get_stock_item(stock_item_id)
-        if not item:
-            print(f"⚠️ [REMOVE_WARN] Item {stock_item_id} not found in Sheets.")
+        # 0. ROBUST LOOKUP: Prioritize Firestore Source of Truth for logging
+        item_details = {}
+        res = inventory_service.find_by_dist_id(stock_item_id)
+        if res and res.get('item'):
+            f_item = res['item']
+            item_details = {
+                'item_name': f_item.get('product_name', 'Stock Item'),
+                'product_code': f_item.get('product_code', stock_item_id)
+            }
+        else:
+            # Fallback to Sheets only if not in Firestore
+            sheets_item = sheets_service.get_stock_item(stock_item_id)
+            if sheets_item:
+                item_details = {
+                    'item_name': sheets_item.get('item_name'),
+                    'product_code': sheets_item.get('product_code')
+                }
+
+        if not item_details:
+            print(f"⚠️ [REMOVE_WARN] Item {stock_item_id} not found in any source.")
             raise HTTPException(status_code=404, detail="Stock item not found")
+
+        # Update 'item' variable name to 'item_details' in follow-up code
+        item = item_details
             
         # 1. Authoritative Deduction (Backend updates Firestore & Sheet)
         new_remaining = inventory_service.remove_stock_spatial(
