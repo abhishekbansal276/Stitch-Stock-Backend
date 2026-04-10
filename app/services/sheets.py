@@ -54,36 +54,32 @@ def _rgb(key: str) -> dict:
 class SheetsService:
     # ── SCHEMA DEFINITIONS ────────────────────────────────────────────────────
     BASE_SCHEMA = [
-        # 1. Bill Info
-        "Date", "Supplier Name", "Invoice Number", "Supplier GST",
+        # 1. Bill Header
+        "Date", "Invoice Number", "Transporter Name", "Remarks",
         # 2. Product Details
         "Product Name", "Product Code", "Batch Number",
         # 3. Quantity / Packaging
-        "Quantity Received", "Unit", "Number of Bags", "Storage Type",
+        "Quantity Received (In Unit)", "Unit", "Number of Bags", "Storage Type",
         # 4. Item Financials
-        "Rate per Unit", "Item Amount",
-        # 5. Bill Totals
-        "Taxable Amount", "Taxes (IGST/CGST/SGST)", "Transport / Freight", "Grand Total",
-        # 6. Transport
-        "Vehicle Number", "Transporter Name",
-        # 7. System Meta
-        "Barcode Link", "Barcode ID", "Remarks", "Created At", "Created By", "Updated At", "Updated By",
+        "Rate per Unit",
+        # 5. System Meta
+        "Barcode Link", "Barcode ID", "Created At", "Created By", "Updated At", "Updated By",
     ]
     MOVEMENTS_SCHEMA = [
-        "Timestamp", "Product Name", "Type", "Quantity", "Bags", "Warehouse", "Location", "User",
+        "Timestamp", "Product Name", "Type", "Quantity (In Unit)", "Bags", "Warehouse", "Location", "User",
         "Movement ID", "Barcode ID", "Transaction ID", "Position ID", "Warehouse ID",
     ]
     SUMMARY_SCHEMA = [
-        "Product Name", "Product Code", "Current Balance", "Current Bags", "Unit",
-        "Total Received", "Total Dispatched", "Total Bags Received", "Total Bags Dispatched", "Last Updated",
+        "Product Name", "Product Code", "Current Balance (In Unit)", "Current Bags", "Unit",
+        "Total Received (In Unit)", "Total Dispatched (In Unit)", "Total Bags Received", "Total Bags Dispatched", "Last Updated",
     ]
 
     # Column widths (pixels) — tuned per sheet for readability
     REGISTER_COL_WIDTHS = {
         0: 110,   # Date
-        1: 160,   # Supplier Name
-        2: 150,   # Invoice Number
-        3: 140,   # Supplier GST
+        1: 150,   # Invoice Number
+        2: 160,   # Transporter Name
+        3: 200,   # Remarks
         4: 220,   # Product Name
         5: 130,   # Product Code
         6: 130,   # Batch Number
@@ -92,20 +88,12 @@ class SheetsService:
         9: 110,   # Number of Bags
         10: 120,  # Storage Type
         11: 130,  # Rate per Unit
-        12: 140,  # Item Amount
-        13: 140,  # Taxable Amount
-        14: 190,  # Taxes
-        15: 160,  # Transport / Freight
-        16: 150,  # Grand Total
-        17: 140,  # Vehicle Number
-        18: 160,  # Transporter Name
-        19: 180,  # Barcode Link
-        20: 170,  # Barcode ID
-        21: 200,  # Remarks
-        22: 150,  # Created At
-        23: 130,  # Created By
-        24: 150,  # Updated At
-        25: 130,  # Updated By
+        12: 180,  # Barcode Link
+        13: 170,  # Barcode ID
+        14: 150,  # Created At
+        15: 130,  # Created By
+        16: 150,  # Updated At
+        17: 130,  # Updated By
     }
     MOVEMENTS_COL_WIDTHS = {
         0: 160, 1: 200, 2: 90, 3: 100, 4: 100, 5: 160, 6: 160,
@@ -117,9 +105,9 @@ class SheetsService:
 
     # Identify which columns should be right-aligned (numbers, rates, totals)
     NUMERIC_COLS_MAP = {
-        "Stock Register": [7, 9, 11, 12, 13, 14, 15, 16],
-        "Stock Movements": [3, 5],
-        "Stock Summary": [3, 5, 6],
+        "Stock Register": [7, 9, 11], # Indexes changed due to better schema
+        "Stock Movements": [3, 4],
+        "Stock Summary": [2, 3, 5, 6, 7, 8],
     }
 
     SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
@@ -220,13 +208,11 @@ class SheetsService:
         try:
             if title == "Stock Register":
                 super_row = [
-                    "BILL INFO (A)", "", "BILL INFO (B)", "",
+                    "BILL HEADER", "", "", "",
                     "PRODUCT DETAILS", "", "",
                     "QUANTITY / PACKAGING", "", "", "",
-                    "ITEM FINANCIALS", "",
-                    "BILL TOTALS", "", "", "",
-                    "TRANSPORT", "",
-                    "SYSTEM META", "", "", "", "", "", ""
+                    "FINANCIALS",
+                    "SYSTEM META", "", "", "", "", ""
                 ]
                 values = [super_row, schema]
                 range_target = f"{title}!1:2"
@@ -325,8 +311,8 @@ class SheetsService:
             })
 
             if title == "Stock Register":
-                # Adjusted for new Storage Type column at index 10
-                super_spans = [(0, 2), (2, 4), (4, 7), (7, 11), (11, 13), (13, 17), (17, 19), (19, 26)]
+                # Grouped: Header(4), Products(3), Qty(4), Finance(1), System(6)
+                super_spans = [(0, 4), (4, 7), (7, 11), (11, 12), (12, 18)]
             elif title == "Stock Movements":
                 super_spans = [(0, 2), (2, 7), (7, 12)]
             elif title == "Stock Summary":
@@ -807,7 +793,7 @@ class SheetsService:
         }.get(title, [])
 
         full_date_time_cols = {
-            "Stock Register":  [22, 24],
+            "Stock Register":  [14, 16],
             "Stock Movements": [0],
             "Stock Summary":   [9],
         }.get(title, [])
@@ -968,9 +954,9 @@ class SheetsService:
         if target in ["", "NB", "INV-N/A"]: return False
         
         try:
-            # Fetch ONLY Column C (Invoice Number) from Stock Register
-            # In BASE_SCHEMA, 'Invoice Number' is at index 2 (Col C)
-            range_name = "Stock Register!C:C"
+            # Fetch ONLY Column B (Invoice Number) from Stock Register
+            # In BASE_SCHEMA, 'Invoice Number' is at index 1 (Col B)
+            range_name = "Stock Register!B:B"
             res = self.service.spreadsheets().values().get(
                 spreadsheetId=self.spreadsheet_id,
                 range=range_name
@@ -998,324 +984,159 @@ class SheetsService:
                 self.header_map = self._get_or_create_headers()
                 now = self._get_now_ist()
                 
-                # ── 1. BULK LOOKUP ────────────────────────────────────────────────────
-                # Fetch lookups for Register (Barcode IDs) and Summary (Product Codes)
-                try:
-                    # Use dynamic range for Register
-                    reg_max_col = self._get_col_letter(len(self.BASE_SCHEMA) - 1)
-                    sum_max_col = self._get_col_letter(len(self.SUMMARY_SCHEMA) - 1)
-                    lookup_ranges = [f"Stock Register!A:{reg_max_col}", f"Stock Summary!A:{sum_max_col}"]
-                    batch_res = self.service.spreadsheets().values().batchGet(
-                        spreadsheetId=self.spreadsheet_id,
-                        ranges=lookup_ranges
-                    ).execute().get("valueRanges", [])
-                    
-                    reg_rows = batch_res[0].get("values", []) if len(batch_res) > 0 else []
-                    sum_rows = batch_res[1].get("values", []) if len(batch_res) > 1 else []
+                # ── 1. BULK LOOKUP ──
+                reg_max_col = self._get_col_letter(len(self.BASE_SCHEMA) - 1)
+                sum_max_col = self._get_col_letter(len(self.SUMMARY_SCHEMA) - 1)
+                lookup_ranges = [f"Stock Register!A:{reg_max_col}", f"Stock Summary!A:{sum_max_col}"]
+                batch_res = self.service.spreadsheets().values().batchGet(
+                    spreadsheetId=self.spreadsheet_id,
+                    ranges=lookup_ranges
+                ).execute().get("valueRanges", [])
+                
+                reg_rows = batch_res[0].get("values", []) if len(batch_res) > 0 else []
+                sum_rows = batch_res[1].get("values", []) if len(batch_res) > 1 else []
 
-                    # ── 1a. DUPLICATE BILL CHECK (Safety Fallback) ────────────────────
-                    # Note: UI already does this synchronously now, but keep as sanity check
-                    target_invoice = str(header.get("Invoice Number", "")).strip().upper()
-                    target_supplier = str(header.get("Supplier Name", "")).strip()
-                    
-                    if target_invoice and target_invoice != "NB" and target_invoice != "INV-N/A":
-                        # Invoice Number is at index 2 in BASE_SCHEMA
-                        invoice_col_idx = 2 
-                        for row in reg_rows:
-                            if len(row) > invoice_col_idx:
-                                existing_invoice = str(row[invoice_col_idx]).strip().upper()
-                                if existing_invoice == target_invoice:
-                                    # DUPLICATE DETECTED!
-                                    err_msg = f"Bill #{target_invoice} from {target_supplier} was already entered in the Stock Register."
-                                    print(f"🛑 [DUP-CHECK] {err_msg}")
-                                    
-                                    # Trigger Push Notification to Admins
-                                    fcm_service.send_multicast_to_admins(
-                                        title="Bill Already Entered",
-                                        body=err_msg,
-                                        data={"invoice_no": target_invoice, "type": "duplicate_alert"}
-                                    )
-                                    
-                                    # Abort the process
-                                    raise Exception(f"Duplicate Bill Detected: {target_invoice}")
-            
-                    # Map column names for fast access
-                    h = self.header_map
-                    b_id_idx = h.get("Barcode ID", len(self.BASE_SCHEMA)-1)
-                    qty_idx  = h.get("Quantity Received", 2)
-                    
-                    # Index for fast search - ONLY the FIRST barcode match is updated
-                    existing_reg_barcode = {}
-                    for i, r in enumerate(reg_rows):
-                        if len(r) > b_id_idx:
-                            bid = str(r[b_id_idx]).strip()
-                            if bid and bid not in existing_reg_barcode:
-                                existing_reg_barcode[bid] = i + 1
+                # 1a. Duplicate Check
+                target_inv = str(header.get("Invoice Number", "")).strip().upper()
+                if target_inv and target_inv not in ["NB", "INV-N/A"]:
+                    for row in reg_rows:
+                        if len(row) > 1 and str(row[1]).strip().upper() == target_inv:
+                            raise Exception(f"Duplicate Bill Detected: {target_inv}")
 
-                    # Cache summary data in memory for accumulation - PRIORITIZE FIRST ROW
-                    summary_data_map = {}
-                    for i, r in enumerate(sum_rows):
-                        if i < 2: continue # SKIP SUPER-HEADER (row 1) + COLUMN HEADERS (row 2)
-                        if len(r) >= 2:
-                            code_key = normalize_id(r[1])
-                            if code_key and code_key not in summary_data_map:
-                                summary_data_map[code_key] = {
-                                    "row": i + 1,
-                                    "name": r[0],
-                                    "balance": self._to_float(r[2]),
-                                    "bags_balance": self._to_float(r[3]) if len(r) > 3 else 0.0,
-                                    "unit": r[4] if len(r) > 4 else "PCS",
-                                    "received": self._to_float(r[5]) if len(r) > 5 else 0.0,
-                                    "dispatched": self._to_float(r[6]) if len(r) > 6 else 0.0,
-                                    "bags_received": self._to_float(r[7]) if len(r) > 7 else 0.0,
-                                    "bags_dispatched": self._to_float(r[8]) if len(r) > 8 else 0.0
-                                }
-                except Exception as e:
-                    print(f"Sheets Bulk Lookup Error: {e}")
-                    existing_reg_barcode = {}; summary_idx = {}; summary_data_map = {}
+                h = self.header_map
+                b_id_idx = h.get("Barcode ID", 13)
+                q_idx = h.get("Quantity Received (In Unit)", 7)
+                b_idx = h.get("Number of Bags", 9)
+                
+                existing_reg_barcode = {}
+                for i, r in enumerate(reg_rows):
+                    if len(r) > b_id_idx:
+                        bid = str(r[b_id_idx]).strip()
+                        if bid and bid not in existing_reg_barcode:
+                            existing_reg_barcode[bid] = i + 1
 
-                updates_batch = []  # List of {range, values} for batchUpdate
+                summary_data_map = {}
+                for i, r in enumerate(sum_rows):
+                    if i < 2: continue
+                    if len(r) >= 2:
+                        code_key = normalize_id(r[1])
+                        if code_key and code_key not in summary_data_map:
+                            summary_data_map[code_key] = {
+                                "row": i + 1, "name": r[0], "balance": self._to_float(r[2]),
+                                "bags_balance": self._to_float(r[3]) if len(r) > 3 else 0.0,
+                                "unit": r[4] if len(r) > 4 else "PCS",
+                                "received": self._to_float(r[5]) if len(r) > 5 else 0.0,
+                                "dispatched": self._to_float(r[6]) if len(r) > 6 else 0.0,
+                                "bags_received": self._to_float(r[7]) if len(r) > 7 else 0.0,
+                                "bags_dispatched": self._to_float(r[8]) if len(r) > 8 else 0.0
+                            }
+
+                updates_batch = []
                 movements_append = []
                 summary_appends = []
                 register_appends = []
 
-                # ── 2. PROCESS ITEMS ──────────────────────────────────────────────────
-                batch_new_codes = {}    # code -> idx in register_appends
-                batch_new_barcodes = {} # barcode -> idx in register_appends
-
+                # ── 2. PROCESS ITEMS ──
                 for i, item in enumerate(items):
                     item_id = str(item_ids[i]).strip()
-                    name = str(item.get("Product Name") or header.get("Product Name") or "Unknown Item").strip()
+                    name = str(item.get("Product Name") or header.get("Product Name") or "Unknown").strip()
                     code = str(item.get("Product Code") or header.get("Product Code") or item_id[:8]).strip()
+                    # -- COMPATIBILITY LAYER --
+                    raw_qty = item.get("Quantity Received (In Unit)") or item.get("Quantity Received") or 0
+                    raw_bags = item.get("Number of Bags") or 0
                     
-                    # [NEW] Handle N/A Availability
-                    raw_qty = item.get("Quantity Received") or header.get("Quantity Received") or 0
-                    raw_bags = item.get("Number of Bags") or item.get("bags") or 0
-                    
-                    qty  = self._to_float(raw_qty)
-                    bags = self._to_float(raw_bags)
-                    unit = str(item.get("Unit") or header.get("Unit") or "PCS").strip()
+                    qty, bags = self._to_float(raw_qty), self._to_float(raw_bags)
+                    unit = str(item.get("Unit") or "PCS").strip()
 
-                    # Safety: Skip 'Ghost' entries
-                    if qty < 0.001 and name == "Unknown Item":
-                        continue
-
-                    # ── A. Register Upsert ──
                     row_idx = existing_reg_barcode.get(item_id)
-                    
                     if row_idx:
-                        qty_idx  = self.header_map.get("Quantity Received", 7)
-                        bags_idx = self.header_map.get("Number of Bags", 9)
-                        old_reg_qty  = 0.0
-                        old_reg_bags = 0
+                        cur_qty, cur_bags = 0.0, 0.0
                         if row_idx <= len(reg_rows):
-                            reg_row = reg_rows[row_idx-1]
-                            old_reg_qty  = self._to_float(reg_row[qty_idx])  if len(reg_row) > qty_idx  else 0.0
-                            old_reg_bags = int(self._to_float(reg_row[bags_idx])) if len(reg_row) > bags_idx else 0
+                            row = reg_rows[row_idx-1]
+                            cur_qty = self._to_float(row[q_idx]) if len(row) > q_idx else 0.0
+                            cur_bags = self._to_float(row[b_idx]) if len(row) > b_idx else 0.0
                         
-                        updates_batch.append({
-                            "range": f"Stock Register!{self._get_col_letter(qty_idx)}{row_idx}",
-                            "values": [[self._clean_num(old_reg_qty + qty)]]
-                        })
-                        updates_batch.append({
-                            "range": f"Stock Register!{self._get_col_letter(bags_idx)}{row_idx}",
-                            "values": [[int(round(old_reg_bags + bags))]]
-                        })
-                        updates_at_idx = self.header_map.get("Updated At", 23)
-                        updates_by_idx = self.header_map.get("Updated By", 24)
-                        col_range = f"{self._get_col_letter(updates_at_idx)}{row_idx}:{self._get_col_letter(updates_by_idx)}{row_idx}"
-                        updates_batch.append({
-                            "range": f"Stock Register!{col_range}",
-                            "values": [[int(now.timestamp()), user_display]]
-                        })
+                        updates_batch.append({"range": f"Stock Register!{self._get_col_letter(q_idx)}{row_idx}", "values": [[self._clean_num(cur_qty + qty)]]})
+                        updates_batch.append({"range": f"Stock Register!{self._get_col_letter(b_idx)}{row_idx}", "values": [[self._clean_num(cur_bags + bags)]]})
+                        upd_at_idx, upd_by_idx = h.get("Updated At", 16), h.get("Updated By", 17)
+                        updates_batch.append({"range": f"Stock Register!{self._get_col_letter(upd_at_idx)}{row_idx}:{self._get_col_letter(upd_by_idx)}{row_idx}", "values": [[int(now.timestamp()), user_display]]})
                     else:
-                        # Append NEW row
                         row_data = [""] * len(self.BASE_SCHEMA)
-                        h = self.header_map
-                        
-                        row_data[h["Product Name"]] = name
-                        row_data[h["Product Code"]] = code
-                        row_data[h["Quantity Received"]] = "N/A" if raw_qty == "N/A" else self._clean_num(qty)
-                        row_data[h["Unit"]] = unit
-                        row_data[h["Batch Number"]] = str(item.get("Batch Number", "")).strip()
-                        row_data[h["Number of Bags"]] = "N/A" if raw_bags == "N/A" else int(round(bags))
-                        row_data[h["Storage Type"]] = item.get("storage_type") or "UNIT"
-                        row_data[h["Barcode ID"]] = item_id
-                        row_data[h["Created At"]] = int(now.timestamp())
-                        row_data[h["Created By"]] = user_display
-                        row_data[h["Updated At"]] = int(now.timestamp())
-                        row_data[h["Updated By"]] = user_display
-                        
-                        # Map remaining fields
-                        numeric_fields = {"Quantity Received", "Number of Bags", "Rate per Unit", 
-                                         "Item Amount", "Taxable Amount", "Transport / Freight", "Grand Total"}
-                        for col_name in self.BASE_SCHEMA:
-                            idx = h[col_name]
-                            if not row_data[idx]:
-                                # Handle Special Case: Taxes Concatenation
-                                if col_name == "Taxes (IGST/CGST/SGST)":
-                                    taxes = header.get("Taxes") or header.get("taxes") or []
-                                    if isinstance(taxes, list) and len(taxes) > 0:
-                                        # Multiple taxes breakdown: "100.0 (CGST), 100.0 (SGST)"
-                                        tax_strs = []
-                                        for t in taxes:
-                                            # Support both dict and model objects
-                                            lbl = t.get("label") if isinstance(t, dict) else getattr(t, "label", "Tax")
-                                            amt = t.get("amount") if isinstance(t, dict) else getattr(t, "amount", 0)
-                                            tax_strs.append(f"{amt} ({lbl})")
-                                        row_data[idx] = ", ".join(tax_strs)
-                                    else:
-                                        # Fallback to single value
-                                        row_data[idx] = self._clean_num(header.get(col_name, 0))
+                        num_fields = {"Quantity Received (In Unit)", "Number of Bags", "Rate per Unit"}
+                        for col in self.BASE_SCHEMA:
+                            idx = h[col]
+                            if col == "Barcode ID": row_data[idx] = item_id
+                            elif col in ["Created At", "Updated At"]: row_data[idx] = int(now.timestamp())
+                            elif col in ["Created By", "Updated By"]: row_data[idx] = user_display
+                            elif col == "Barcode Link": row_data[idx] = f"https://stitch-stock.web.app/inventory/{item_id}"
+                            elif col == "Storage Type": row_data[idx] = item.get("storage_type") or "UNIT"
+                            else:
+                                # -- COMPATIBILITY LAYER --
+                                val = item.get(col) or header.get(col)
+                                if col == "Quantity Received (In Unit)" and val is None:
+                                    val = item.get("Quantity Received") or header.get("Quantity Received")
+                                    
+                                if val is not None:
+                                    row_data[idx] = ("N/A" if val == "N/A" else self._clean_num(val)) if col in num_fields else val
                                 else:
-                                    val = item.get(col_name) or header.get(col_name)
-                                    if val is not None:
-                                        if col_name in numeric_fields:
-                                            row_data[idx] = self._clean_num(val)
-                                        else:
-                                            row_data[idx] = str(val)
-                                    else:
-                                        row_data[idx] = ""
-                        
-                        batch_new_barcodes[item_id] = len(register_appends)
+                                    row_data[idx] = 0 if col in num_fields else ""
                         register_appends.append(row_data)
 
-                    # ── B. Movement Entries (One per location) ──
-                    trans_id = header.get("Invoice Number") or f"TRANS-{str(uuid.uuid4())[:4].upper()}"
+                    # Movements
+                    trans_id = header.get("Invoice Number") or f"TR-{uuid.uuid4().hex[:4].upper()}"
                     dists = item.get('distributions', [])
-                    
-                    if not dists:
-                        # Fallback for legacy or unknown distribution data
-                        movements_append.append([
-                            now.strftime("%Y-%m-%d %H:%M:%S"), name, "IN", 
-                            self._clean_num(qty), self._clean_num(bags),
-                            "Warehouse", "Intake", user_display,
-                            f"MOV-{uuid.uuid4().hex[:6].upper()}", item_id, trans_id, item_id, "default"
-                        ])
-                    else:
-                        # ── PRECISION: Convert units vs bags based on user entry mode ──
-                        # Ratio: total units / total bags for this specific item batch
-                        # Ratio: total units / total bags for this specific item batch
-                        ratio = (qty / bags) if bags > 0 else 1.0
-                        
-                        for d in dists:
-                            raw_val = d.get('qty', 0)
-                            is_na_entry = str(raw_val).strip().upper() == "N/A"
-                            val = self._to_float(raw_val)
-                            
-                            # Allow "N/A" to be recorded, but skip purely numeric 0.0 values
-                            if not is_na_entry and val < 0.001: 
-                                continue
-                            
-                            u_type = d.get('unit_type', 'qty')
-                            moving_qty = 0.0
-                            moving_bags = 0.0
+                    ratio = (qty / bags) if bags > 0 else 1.0
+                    for d in dists:
+                        d_val = self._to_float(d_raw := d.get('qty', 0))
+                        if str(d_raw).strip().upper() != "N/A" and d_val < 0.001: continue
+                        u_type = d.get('unit_type', 'qty')
+                        p_q_na, p_b_na = str(raw_qty).strip().upper() == "N/A", str(raw_bags).strip().upper() == "N/A"
+                        if p_q_na and not p_b_na: m_q, m_b = "N/A", (d_val if u_type == 'bags' else d_val/ratio)
+                        elif p_b_na and not p_q_na: m_b, m_q = "N/A", (d_val if u_type == 'qty' else d_val*ratio)
+                        elif p_q_na and p_b_na: m_q, m_b = "N/A", "N/A"
+                        else: m_q, m_b = (d_val, d_val/ratio) if u_type == 'qty' else (d_val*ratio, d_val)
+                        movements_append.append([now.strftime("%Y-%m-%d %H:%M:%S"), name, "IN", self._clean_num(m_q), self._clean_num(m_b), d.get('warehouse', 'WH'), d.get('location', 'Intake'), user_display, f"MOV-{uuid.uuid4().hex[:6].upper()}", item_id, trans_id, d.get('dist_id', 'NB'), d.get('warehouse_id', 'default')])
 
-                            # Determine N/A status based on original item metadata
-                            # because dist['qty'] might be N/A if it was the primary dist
-                            parent_qty_na = str(item.get("Quantity Received") or "").strip().upper() == "N/A"
-                            parent_bags_na = str(item.get("Number of Bags") or "").strip().upper() == "N/A"
-
-                            if parent_qty_na and not parent_bags_na:
-                                # Qty N/A, Bags are numeric
-                                moving_qty = "N/A"
-                                moving_bags = val if u_type == 'bags' else (val / ratio if ratio > 0 else 0)
-                            elif parent_bags_na and not parent_qty_na:
-                                # Bags N/A, Qty is numeric
-                                moving_bags = "N/A"
-                                moving_qty = val if u_type == 'qty' else (val * ratio)
-                            elif parent_qty_na and parent_bags_na:
-                                # Both N/A
-                                moving_qty = "N/A"
-                                moving_bags = "N/A"
-                            else:
-                                # Standard numeric logic
-                                if u_type == 'bags':
-                                    moving_bags = val
-                                    moving_qty  = val * ratio
-                                else:
-                                    moving_qty  = val
-                                    moving_bags = val / ratio if ratio > 0 else 0
-                            
-                            movements_append.append([
-                                now.strftime("%Y-%m-%d %H:%M:%S"), name, "IN", 
-                                self._clean_num(moving_qty), self._clean_num(moving_bags),
-                                d.get('warehouse', 'Warehouse'), d.get('location', 'Intake'), user_display,
-                                f"MOV-{uuid.uuid4().hex[:6].upper()}", item_id, trans_id, d.get('dist_id', 'NB'), d.get('warehouse_id', 'default')
-                            ])
-
-                # ── 3. CONSOLIDATE SUMMARY UPDATES ────────────────────────────────────
-                session_summary_map = {}
+                # ── 3. SUMMARY ──
+                ses_sum = {}
                 for item in items:
-                    raw_code = item.get("Product Code") or item.get("code") or ""
-                    code_key = normalize_id(raw_code)
-                    if not code_key: continue
-                    
-                    # Store raw values to preserve "N/A"
-                    raw_qty = item.get("Quantity Received") or item.get("qty") or 0
-                    raw_bags = item.get("Number of Bags") or item.get("bags") or 0
-                    
-                    i_name = item.get("Product Name") or item.get("name") or "Item"
-                    i_unit = item.get("Unit") or item.get("unit") or "PCS"
-                    
-                    if code_key not in session_summary_map:
-                        session_summary_map[code_key] = {"name": i_name, "code": raw_code, "qty": raw_qty, "bags": raw_bags, "unit": i_unit}
+                    c_key = normalize_id(item.get("Product Code") or "")
+                    if not c_key: continue
+                    # -- COMPATIBILITY LAYER --
+                    r_q = item.get("Quantity Received (In Unit)") or item.get("Quantity Received") or 0
+                    r_b = item.get("Number of Bags") or 0
+                    if c_key not in ses_sum:
+                        ses_sum[c_key] = {"name": item.get("Product Name", "Item"), "code": item.get("Product Code", ""), "qty": r_q, "bags": r_b, "unit": item.get("Unit", "PCS")}
                     else:
-                        target = session_summary_map[code_key]
-                        # Aggregate Qty
-                        if str(raw_qty).upper() == "N/A": target["qty"] = "N/A"
-                        elif target["qty"] != "N/A": 
-                            target["qty"] = self._to_float(target["qty"]) + self._to_float(raw_qty)
-                        # Aggregate Bags
-                        if str(raw_bags).upper() == "N/A": target["bags"] = "N/A"
-                        elif target["bags"] != "N/A": 
-                            target["bags"] = self._to_float(target["bags"]) + self._to_float(raw_bags)
+                        s = ses_sum[c_key]
+                        for k, v in [("qty", r_q), ("bags", r_b)]:
+                            if str(v).upper() == "N/A": s[k] = "N/A"
+                            elif s[k] != "N/A": s[k] = self._to_float(s[k]) + self._to_float(v)
 
-                for code_key, session_data in session_summary_map.items():
-                    qty = session_data["qty"]
-                    bags = session_data["bags"]
-                    name = session_data["name"]
-                    unit = session_data["unit"]
-                    code = session_data["code"]
-
-                    s_entry = summary_data_map.get(code_key)
-                    if s_entry:
-                        # Update Balance (Float or N/A)
-                        if str(qty).upper() == "N/A": s_entry["balance"] = "N/A"
-                        elif s_entry["balance"] != "N/A": s_entry["balance"] += self._to_float(qty)
-                        
-                        # Update Bags Balance
-                        if str(bags).upper() == "N/A": s_entry["bags_balance"] = "N/A"
-                        elif s_entry["bags_balance"] != "N/A": s_entry["bags_balance"] += self._to_float(bags)
-                        
-                        # Update Received Total
-                        if str(qty).upper() == "N/A": s_entry["received"] = "N/A"
-                        elif s_entry["received"] != "N/A": s_entry["received"] += self._to_float(qty)
-                        
-                        # Update Bags Received Total
-                        if str(bags).upper() == "N/A": s_entry["bags_received"] = "N/A"
-                        elif s_entry["bags_received"] != "N/A": s_entry["bags_received"] += self._to_float(bags)
-
+                for code_key, sd in ses_sum.items():
+                    s_ent = summary_data_map.get(code_key)
+                    if s_ent:
+                        for k, v in [("balance", sd["qty"]), ("bags_balance", sd["bags"]), ("received", sd["qty"]), ("bags_received", sd["bags"])]:
+                            if str(v).upper() == "N/A": s_ent[k] = "N/A"
+                            elif s_ent[k] != "N/A": s_ent[k] += self._to_float(v)
                         updates_batch.append({
-                            "range": f"Stock Summary!C{s_entry['row']}:J{s_entry['row']}",
+                            "range": f"Stock Summary!C{s_ent['row']}:J{s_ent['row']}",
                             "values": [[
-                                self._clean_num(s_entry["balance"]), self._clean_num(s_entry["bags_balance"]), unit,
-                                self._clean_num(s_entry["received"]), self._clean_num(s_entry["dispatched"]),
-                                self._clean_num(s_entry["bags_received"]), self._clean_num(s_entry["bags_dispatched"]),
+                                self._clean_num(s_ent["balance"]), self._clean_num(s_ent["bags_balance"]), sd["unit"],
+                                self._clean_num(s_ent["received"]), self._clean_num(s_ent["dispatched"]),
+                                self._clean_num(s_ent["bags_received"]), self._clean_num(s_ent["bags_dispatched"]),
                                 now.strftime("%Y-%m-%d %H:%M:%S")
                             ]]
                         })
                     else:
                         summary_appends.append([
-                            name, code, self._clean_num(qty), self._clean_num(bags), unit, 
-                            self._clean_num(qty), 0, self._clean_num(bags), 0, 
+                            sd["name"], sd["code"], self._clean_num(sd["qty"]), self._clean_num(sd["bags"]), sd["unit"], 
+                            self._clean_num(sd["qty"]), 0, self._clean_num(sd["bags"]), 0, 
                             now.strftime("%Y-%m-%d %H:%M:%S")
                         ])
-                        summary_data_map[code_key] = {"row": 9999}
 
-                # ── 4. EXECUTE WRITES ────────────────────────────────────────────────
+                # ── 4. EXECUTE WRITES ──
                 try:
-                    # First, standard value updates (Upserts)
                     if updates_batch:
                         self.service.spreadsheets().values().batchUpdate(
                             spreadsheetId=self.spreadsheet_id,
@@ -1428,7 +1249,7 @@ class SheetsService:
         try:
             h = {n: i for i, n in enumerate(self.BASE_SCHEMA)}
             b_id_idx = h.get("Barcode ID", 20)
-            qty_idx  = h.get("Quantity Received", 7)
+            qty_idx  = h.get("Quantity Received (In Unit)", 7)
             row_idx = self._find_row_by_col(b_id_idx, barcode_id)
             if row_idx != -1:
                 col_let = self._get_col_letter(qty_idx)
@@ -1482,7 +1303,7 @@ class SheetsService:
                         return {
                             "stock_item_id": row[b_id_idx],
                             "item_name": row[h["Product Name"]],
-                            "quantity_remaining": self._to_float(row[h["Quantity Received"]]),
+                            "quantity_remaining": self._to_float(row[h["Quantity Received (In Unit)"]]),
                             "unit": row[h["Unit"]],
                             "supplier_name": row[h["Supplier Name"]],
                             "product_code": row[h["Product Code"]]
@@ -1618,7 +1439,7 @@ class SheetsService:
                     raise ValueError(f"Stock item {product_code or barcode_id} (Batch: {batch_number or 'N/A'}) not found in Stock Register. Please run the Admin Janitor to reconcile.")
 
                 # 3. Update Stock Register Row
-                qty_col = self._get_col_letter(h.get("Quantity Received", 7))
+                qty_col = self._get_col_letter(h.get("Quantity Received (In Unit)", 7))
                 unit_col = self._get_col_letter(h.get("Unit", 8))
                 bags_col = self._get_col_letter(h.get("Number of Bags", 9))
                 st_col = self._get_col_letter(h.get("Storage Type", 10))

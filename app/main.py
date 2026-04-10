@@ -238,12 +238,12 @@ async def create_stock(
         
         # 0. PRE-SYNC VALIDATION: Ensure bill hasn't been entered
         invoice_num = header.get('Invoice Number')
-        supplier = header.get('Supplier Name')
+        transporter = header.get('Transporter Name')
         
         if invoice_num:
             print(f"🕵️ Syncing Bill #{invoice_num}... Checking for duplicates...")
             if sheets_service.check_invoice_duplicate(invoice_num):
-                err_msg = f"Bill #{invoice_num} already exists in the Stock Register."
+                err_msg = f"Invoice/Bill #{invoice_num} already exists in the Stock Register."
                 print(f"🛑 [SYNC-ABORTED] {err_msg}")
                 raise HTTPException(status_code=400, detail=err_msg)
         
@@ -279,9 +279,10 @@ async def create_stock(
                 base['distributions'] = list(base.get('distributions', [])) + list(item_dists)
                 # Aggregate counts
                 try:
-                    q1 = float(base.get('Quantity Received', 0))
-                    q2 = float(item.get('Quantity Received', 0))
-                    base['Quantity Received'] = q1 + q2
+                    # -- COMPATIBILITY LAYER --
+                    q1 = float(base.get('Quantity Received (In Unit)') or base.get('Quantity Received', 0))
+                    q2 = float(item.get('Quantity Received (In Unit)') or item.get('Quantity Received', 0))
+                    base['Quantity Received (In Unit)'] = q1 + q2
                     
                     b1 = float(base.get('Number of Bags', 0))
                     b2 = float(item.get('Number of Bags', 0))
@@ -338,7 +339,7 @@ async def _process_async_ingestion(header: dict, items: list, item_ids: list, us
             try:
                 item_data = items[i]
                 distributions = item_data.get('distributions', [
-                    {'loc_id': 'default', 'loc_name': 'Main Floor', 'qty': item_data.get('Quantity Received', 0)}
+                    {'loc_id': 'default', 'loc_name': 'Main Floor', 'qty': item_data.get('Quantity Received (In Unit)') or item_data.get('Quantity Received', 0)}
                 ])
                 
                 # Returns deterministic doc_id, sets sync_status=pending
@@ -358,7 +359,8 @@ async def _process_async_ingestion(header: dict, items: list, item_ids: list, us
                 doc_ids_to_sync.append(d_id)
                 
                 # Accumulate for Log
-                item_qty = safe_float(item_data.get('Quantity Received', 0))
+                # -- COMPATIBILITY LAYER --
+                item_qty = safe_float(item_data.get('Quantity Received (In Unit)') or item_data.get('Quantity Received', 0))
                 total_qty_combined += item_qty
                 log_details.append({
                     'product_name': item_data.get('Product Name'),
@@ -920,8 +922,8 @@ async def _janitor_routine():
             try:
                 print(f"🤖 JANITOR: Retrying sync for {item.get('doc_id')}")
                 reconstructed_header = {
-                    'Supplier Name': item.get('supplier_name', 'RECOVERED'),
-                    'Invoice Number': 'RECOVERY-SYNC'
+                    'Invoice Number': 'RECOVERY-SYNC',
+                    'Transporter Name': item.get('transporter_name', 'RECOVERED')
                 }
                 # Sync to Sheets
                 sheets_service.save_stock_batch(

@@ -32,24 +32,16 @@ class TaxItem(BaseModel):
 class InvoiceHeader(BaseModel):
     date: str = Field(alias="Date", description="Invoice date in YYYY-MM-DD format")
     invoice_number: str = Field(alias="Invoice Number", description="Invoice/Bill/Challan number")
-    supplier_name: str = Field(alias="Supplier Name", description="Name of the supplier/vendor")
-    supplier_gst: str = Field(alias="Supplier GST", description="GSTIN of the supplier")
-    vehicle_number: Optional[str] = Field(alias="Vehicle Number", description="Vehicle registration number if available")
     transporter_name: Optional[str] = Field(alias="Transporter Name", description="Name of the transport company if available")
-    taxable_amount: float = Field(alias="Taxable Amount", description="Total taxable value before taxes")
-    taxes: List[TaxItem] = Field(alias="Taxes", description="List of individual tax components")
-    transport_freight: float = Field(alias="Transport / Freight", description="Total freight/shipping charges")
-    grand_total: float = Field(alias="Grand Total", description="Final invoice total including all taxes and charges")
 
 class InvoiceItem(BaseModel):
     product_code: str = Field(alias="Product Code", description="HSN, SKU, or Model number")
     product_name: str = Field(alias="Product Name", description="Full description of the item")
     batch_number: Optional[str] = Field(alias="Batch Number", description="Batch or lot number if available")
-    quantity_received: float = Field(alias="Quantity Received", description="Total quantity being received")
+    quantity_received: float = Field(alias="Quantity Received (In Unit)", description="Total quantity being received")
     unit: str = Field(alias="Unit", description="Unit of measure (e.g. PCS, MT, KGS)")
     number_of_bags: int = Field(alias="Number of Bags", description="Count of bags or packages")
     rate_per_unit: float = Field(alias="Rate per Unit", description="Price per single unit")
-    total_amount: float = Field(alias="Total Amount", description="Line item total (Qty * Rate)")
 
 class InvoiceExtraction(BaseModel):
     header: InvoiceHeader
@@ -378,8 +370,8 @@ class OCRService:
 
             if key in merged:
                 base = merged[key]
-                base["Quantity Received"] = self._sum_val(
-                    base.get("Quantity Received"), item.get("Quantity Received"))
+                base["Quantity Received (In Unit)"] = self._sum_val(
+                    base.get("Quantity Received (In Unit)"), item.get("Quantity Received (In Unit)"))
                 base["Number of Bags"] = int(self._sum_val(
                     base.get("Number of Bags", 0), item.get("Number of Bags", 0)))
                 base["Total Amount"] = (
@@ -455,38 +447,24 @@ class OCRService:
 
 GEMINI_PROMPT = """
 Extract invoice data from the image into the specified JSON format.
-Ensure 100% accuracy for financial totals and product details.
-EXTRACT ALL NUMERIC FIELDS (Quantity, Rate, Totals, Amount) WITH 4 DECIMAL PLACES (e.g. 7.6750) if precision is present in the image.
-Consolidate line items ONLY if the Product Code, Product Name, and Batch Number are exactly the same. In such cases, sum their quantities and bags. If the Batch Numbers are different, you MUST keep them as separate line items. Do NOT use comma-separated strings for Batch Numbers.
+Ensure 100% accuracy for product details and quantities.
 
 COMMAND — Return the data in the following standardized JSON format:
 {
   "header": {
     "Date": "YYYY-MM-DD",
     "Invoice Number": "...",
-    "Supplier Name": "...",
-    "Supplier GST": "...",
-    "Vehicle Number": "...",
-    "Transporter Name": "...",
-    "Taxable Amount": 0.0,
-    "Taxes": [
-      { "label": "CGST", "amount": 0.0 },
-      { "label": "SGST", "amount": 0.0 },
-      { "label": "IGST", "amount": 0.0 }
-    ],
-    "Transport / Freight": 0.0,
-    "Grand Total": 0.0
+    "Transporter Name": "..."
   },
   "items": [
     {
       "Product Code": "...",
       "Product Name": "...",
       "Batch Number": "...",
-      "Quantity Received": 0.0,
+      "Quantity Received (In Unit)": 0.0,
       "Unit": "...",
       "Number of Bags": 0,
-      "Rate per Unit": 0.0,
-      "Total Amount": 0.0
+      "Rate per Unit": 0.0
     }
   ]
 }
@@ -596,7 +574,7 @@ FIELD MAPPING — Accept ANY of these aliases (case-insensitive, fuzzy-match)
   Expiry Batch, EXP Batch, Best Before Batch, BBD Batch, COA Batch,
   Test Batch, QC Batch, Release Batch, Approved Batch, Quarantine Batch...
 
-▸ Quantity Received: Quantity, Qty, Qty Received, Received Qty, Nos, Pcs, Pieces,
+▸   ? Quantity Received (In Unit): Quantity, Qty, Qty Received, Received Qty, Nos, Pcs, Pieces,
   Count, Number, No. of Units, Units Received, Total Qty, Dispatched Qty,
   Shipped Qty, Delivered Qty, Accepted Qty, Inspected Qty, Actual Qty, GRN Qty,
   Inward Qty, Received Quantity, Net Qty, Gross Qty, Billed Qty, Ordered Qty,
@@ -922,7 +900,7 @@ EXTRACTION RULES
 GROQ_PROMPT = """
 Extract invoice data from the image into the specified JSON format.
 Ensure 100% accuracy for financial totals and product details.
-EXTRACT ALL NUMERIC FIELDS (Quantity, Rate, Totals, Amount) WITH 4 DECIMAL PLACES (e.g. 7.6750) if precision is present in the image.
+EXTRACT ALL NUMERIC FIELDS (Quantity Received (In Unit), Rate, Totals, Amount) WITH 4 DECIMAL PLACES (e.g. 7.6750) if precision is present in the image.
 
 **CARDINAL RULE**: Consolidate line items ONLY if the Product Code, Product Name, and Batch Number are exactly the same. In such cases, sum their quantities and bags. If the Batch Numbers are different, you MUST keep them as separate line items. NEVER use commas in the "Batch Number" field to list multiple values.
 
@@ -949,7 +927,7 @@ COMMAND — Return the data in the following standardized JSON format:
       "Product Code": "...",
       "Product Name": "...",
       "Batch Number": "...",
-      "Quantity Received": 0.0,
+      "Quantity Received (In Unit)": 0.0,
       "Unit": "...",
       "Number of Bags": 0,
       "Rate per Unit": 0.0,
@@ -1063,7 +1041,7 @@ FIELD MAPPING — Accept ANY of these aliases (case-insensitive, fuzzy-match)
   Expiry Batch, EXP Batch, Best Before Batch, BBD Batch, COA Batch,
   Test Batch, QC Batch, Release Batch, Approved Batch, Quarantine Batch...
 
-▸ Quantity Received: Quantity, Qty, Qty Received, Received Qty, Nos, Pcs, Pieces,
+▸   ? Quantity Received (In Unit): Quantity, Qty, Qty Received, Received Qty, Nos, Pcs, Pieces,
   Count, Number, No. of Units, Units Received, Total Qty, Dispatched Qty,
   Shipped Qty, Delivered Qty, Accepted Qty, Inspected Qty, Actual Qty, GRN Qty,
   Inward Qty, Received Quantity, Net Qty, Gross Qty, Billed Qty, Ordered Qty,
