@@ -757,7 +757,7 @@ class SheetsService:
                 requests.append({
                     "repeatCell": {
                         "range": {"sheetId": sheet_id, "startRowIndex": frozen_rows, "startColumnIndex": col, "endColumnIndex": col+1},
-                        "cell": {"userEnteredFormat": {"horizontalAlignment": "RIGHT", "numberFormat": {"type": "NUMBER", "pattern": "#,##0"}}},
+                        "cell": {"userEnteredFormat": {"horizontalAlignment": "RIGHT", "numberFormat": {"type": "NUMBER", "pattern": "#,##0.0#####"}}},
                         "fields": "userEnteredFormat(horizontalAlignment,numberFormat)",
                     }
                 })
@@ -1368,8 +1368,8 @@ class SheetsService:
             
             return {
                 "total_in": t_in, "total_out": t_out, "available_balance": t_bal,
-                "total_in_bags": int(t_in_b), "total_out_bags": int(t_out_b), 
-                "available_balance_bags": int(t_bal_b),
+                "total_in_bags": t_in_b, "total_out_bags": t_out_b, 
+                "available_balance_bags": t_bal_b,
                 "low_stock_count": int(low)
             }
         except Exception as e:
@@ -1481,7 +1481,7 @@ class SheetsService:
                     spreadsheetId=self.spreadsheet_id,
                     body={"valueInputOption": "USER_ENTERED", "data": [
                         {"range": f"Stock Register!{qty_col}{row_idx}", "values": [[new_qty if is_qty_na else self._clean_num(new_qty)]]},
-                        {"range": f"Stock Register!{bags_col}{row_idx}", "values": [[new_bags if is_bags_na else int(round(new_bags))]]},
+                        {"range": f"Stock Register!{bags_col}{row_idx}", "values": [[new_bags if is_bags_na else self._clean_num(new_bags)]]},
                         {"range": f"Stock Register!{updated_at_col}{row_idx}:{updated_by_col}{row_idx}", "values": [[self._get_now_ist().strftime("%Y-%m-%d %H:%M:%S"), user_display]]}
                     ]}
                 ).execute()
@@ -1641,9 +1641,9 @@ class SheetsService:
                     target_bags_delta = float(bags_delta if not str(bags_delta).upper() == "N/A" else 0)
                     # FIX: Handle positive bags delta correctly
                     adj_bags = -target_bags_delta if m_type == "OUT" else target_bags_delta
-                    new_bags = max(0, int(round(curr_bags + adj_bags)))
-                    new_in_bags = int(curr_in_bags + (target_bags_delta if m_type == "IN" else 0.0))
-                    new_out_bags = int(curr_out_bags + (target_bags_delta if m_type == "OUT" else 0.0))
+                    new_bags = max(0.0, round(curr_bags + adj_bags, 6))
+                    new_in_bags = round(curr_in_bags + (target_bags_delta if m_type == "IN" else 0.0), 6)
+                    new_out_bags = round(curr_out_bags + (target_bags_delta if m_type == "OUT" else 0.0), 6)
                 
                 update_range = f"Stock Summary!C{found_idx}:J{found_idx}"
                 row_vals = [
@@ -1736,7 +1736,7 @@ class SheetsService:
         if val is None: return 0
         if str(val).strip() == "N/A": return "N/A" # [NEW]
         try:
-            v = round(float(val), 4)
+            v = round(float(val), 6)
             if v == int(v):
                 return int(v)
             return v

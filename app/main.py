@@ -344,7 +344,7 @@ async def _process_async_ingestion(header: dict, items: list, item_ids: list, us
                 
                 # Pass 'N/A' strings directly, otherwise convert to safe numeric
                 raw_bags_val = item_data.get('Number of Bags') or item_data.get('number_of_bags', 0)
-                final_bags_p = "N/A" if str(raw_bags_val).upper() == "N/A" else safe_int(raw_bags_val)
+                final_bags_p = "N/A" if str(raw_bags_val).upper() == "N/A" else safe_float(raw_bags_val)
                 
                 raw_qty_val = item_data.get('Quantity Received (In Unit)') or item_data.get('Quantity Received', 0)
                 final_qty_p = "N/A" if str(raw_qty_val).upper() == "N/A" else safe_float(raw_qty_val)
