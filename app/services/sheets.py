@@ -1486,9 +1486,9 @@ class SheetsService:
                 ).execute()
                 p_name = name_res.get("values", [["Unknown"]])[0][0]
                 
-                # Movement record: Force N/A for Quantity if bag item, and ensure bags count captures enterred qty
+                # Movement record: log Weight in Qty column and Bags in Bags column
                 m_qty = "N/A" if is_qty_na else self._clean_num(qty)
-                m_bags = (self._clean_num(qty) if is_bag_item else self._clean_num(bags_removed)) if not is_bags_na else "N/A"
+                m_bags = self._clean_num(bags_removed) if not is_bags_na else "N/A"
 
                 movement_row = [
                     self._get_now_ist().strftime("%Y-%m-%d %H:%M:%S"), p_name, "OUT", 

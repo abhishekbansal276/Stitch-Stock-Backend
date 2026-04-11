@@ -652,6 +652,11 @@ class InventoryService:
             dist = next((d for d in data.get('distributions', []) if d.get('dist_id') == loc_id), {})
             user_display = user.get('full_name', user['email']) if user else "System"
             
+            # Detect item type for logging strategy
+            u_type = str(data.get('unit', '')).lower()
+            st_type = str(data.get('storage_type', '')).upper()
+            is_item_bag_based = 'bag' in u_type or st_type == 'BAG'
+
             # Prepare payload for potential retry
             sync_payload = {
                 "barcode_id": data.get('barcode_id', doc_id),
