@@ -132,7 +132,7 @@ class SheetsService:
                 print("SheetsService: Initialized with service account info")
                 return build("sheets", "v4", credentials=creds)
             except Exception as e:
-                print(f"SheetsService: Failed to build from info — {e}")
+                print(f"SheetsService: Failed to build from info - {e}")
 
         try:
             from google import auth
@@ -140,7 +140,7 @@ class SheetsService:
             print("SheetsService: Initialized with default Application Credentials")
             return build("sheets", "v4", credentials=creds)
         except Exception as e:
-            print(f"SheetsService: Could not initialize (no creds) — {e}")
+            print(f"SheetsService: Could not initialize (no creds) - {e}")
             return None
 
     # ── SHEET BOOTSTRAP ───────────────────────────────────────────────────────
@@ -716,30 +716,20 @@ class SheetsService:
         })
 
         # ── 11. NUMERIC COLUMNS ──────────────────────────────────────────────
-        # Four-tier system to enforce specific precision requirements
-        qty_cols = {
-            "Stock Register":  [7],
-            "Stock Movements": [3],
-            "Stock Summary":   [2, 5, 6],
-        }.get(title, [])
+        h = self.header_map
+        def _get_idx(sheet, col_names):
+            if title != sheet: return []
+            return [h.get(c) for c in col_names if c in h]
+        qty_cols = _get_idx("Stock Register", ["Quantity Received (In Unit)"]) + \
+                   _get_idx("Stock Movements", ["Quantity (In Unit)"]) + \
+                   _get_idx("Stock Summary", ["Current Balance (In Unit)", "Total Received (In Unit)", "Total Dispatched (In Unit)"])
 
-        int_cols = {
-            "Stock Register":  [9],
-            "Stock Movements": [4],
-            "Stock Summary":   [3, 7, 8],
-        }.get(title, [])
+        int_cols = _get_idx("Stock Register", ["Number of Bags"]) + \
+                   _get_idx("Stock Movements", ["Bags"]) + \
+                   _get_idx("Stock Summary", ["Current Bags", "Total Bags Received", "Total Bags Dispatched"])
 
-        financial_cols = {
-            "Stock Register":  [11, 12, 13, 14, 15, 16],
-            "Stock Movements": [],
-            "Stock Summary":   [],
-        }.get(title, [])
-
-        general_numeric_cols = {
-            "Stock Register":  [],
-            "Stock Movements": [],
-            "Stock Summary":   [],
-        }.get(title, [])
+        financial_cols = _get_idx("Stock Register", ["Rate per Unit", "Barcode Link", "Barcode ID", "Created At", "Created By", "Updated At", "Updated By"])
+        general_numeric_cols = []
 
         # TIER 1: Quantity (Forced Decimal, e.g. 2.0)
         for col in qty_cols:
@@ -1005,9 +995,9 @@ class SheetsService:
                             raise Exception(f"Duplicate Bill Detected: {target_inv}")
 
                 h = self.header_map
-                b_id_idx = h.get("Barcode ID", 13)
-                q_idx = h.get("Quantity Received (In Unit)", 7)
-                b_idx = h.get("Number of Bags", 9)
+                b_id_idx = h.get("Barcode ID", 14)
+                q_idx = h.get("Quantity Received (In Unit)", 8)
+                b_idx = h.get("Number of Bags", 10)
                 
                 existing_reg_barcode = {}
                 for i, r in enumerate(reg_rows):
@@ -1230,8 +1220,8 @@ class SheetsService:
             return
         try:
             h = {n: i for i, n in enumerate(self.BASE_SCHEMA)}
-            b_id_idx = h.get("Barcode ID", 20)
-            link_idx = h.get("Barcode Link", 19)
+            b_id_idx = h.get("Barcode ID", 14)
+            link_idx = h.get("Barcode Link", 13)
             row_idx = self._find_row_by_col(b_id_idx, barcode_id)
             if row_idx != -1:
                 col_let = self._get_col_letter(link_idx)
@@ -1249,8 +1239,8 @@ class SheetsService:
             return
         try:
             h = {n: i for i, n in enumerate(self.BASE_SCHEMA)}
-            b_id_idx = h.get("Barcode ID", 20)
-            qty_idx  = h.get("Quantity Received (In Unit)", 7)
+            b_id_idx = h.get("Barcode ID", 14)
+            qty_idx  = h.get("Quantity Received (In Unit)", 8)
             row_idx = self._find_row_by_col(b_id_idx, barcode_id)
             if row_idx != -1:
                 col_let = self._get_col_letter(qty_idx)
@@ -1273,8 +1263,8 @@ class SheetsService:
             
         try:
             h = {n: i for i, n in enumerate(self.BASE_SCHEMA)}
-            b_id_idx = h.get("Barcode ID", 20)
-            p_code_idx = h.get("Product Code", 5)
+            b_id_idx = h.get("Barcode ID", 14)
+            p_code_idx = h.get("Product Code", 6)
             max_col  = self._get_col_letter(len(self.BASE_SCHEMA) - 1)
             
             # Normalize target for comparison
@@ -1440,12 +1430,12 @@ class SheetsService:
                     raise ValueError(f"Stock item {product_code or barcode_id} (Batch: {batch_number or 'N/A'}) not found in Stock Register. Please run the Admin Janitor to reconcile.")
 
                 # 3. Update Stock Register Row
-                qty_col = self._get_col_letter(h.get("Quantity Received (In Unit)", 7))
-                unit_col = self._get_col_letter(h.get("Unit", 8))
-                bags_col = self._get_col_letter(h.get("Number of Bags", 9))
-                st_col = self._get_col_letter(h.get("Storage Type", 10))
-                updated_at_col = self._get_col_letter(h.get("Updated At", 24))
-                updated_by_col = self._get_col_letter(h.get("Updated By", 25))
+                qty_col = self._get_col_letter(h.get("Quantity Received (In Unit)", 8))
+                unit_col = self._get_col_letter(h.get("Unit", 9))
+                bags_col = self._get_col_letter(h.get("Number of Bags", 10))
+                st_col = self._get_col_letter(h.get("Storage Type", 11))
+                updated_at_col = self._get_col_letter(h.get("Updated At", 17))
+                updated_by_col = self._get_col_letter(h.get("Updated By", 18))
 
                 # Fetch row context (Qty, Unit, Bags, Storage Type) for healing and N/A logic
                 reg_res = self.service.spreadsheets().values().get(
@@ -1525,7 +1515,7 @@ class SheetsService:
                         bags_delta=m_bags
                     )
 
-                print(f"✅ Sheets Sync: Deducted {qty} of {p_name} ({barcode_id})")
+                print(f"Sheets Sync: Deducted {qty} of {p_name} ({barcode_id})")
             except Exception as e:
                 print(f"Sheets Record Dispatch Error: {e}")
                 traceback.print_exc()
@@ -1674,16 +1664,20 @@ class SheetsService:
         """Finds a row in the Stock Register that matches both Product Code and Batch Number."""
         if not self.service: return -1
         try:
-            h = {n: i for i, n in enumerate(self.BASE_SCHEMA)}
-            p_code_idx = h.get("Product Code", 5)
-            batch_idx = h.get("Batch Number", 6)
+            h = self.header_map
+            p_code_idx = h.get("Product Code")
+            batch_idx = h.get("Batch Number")
             
+            if p_code_idx is None or batch_idx is None:
+                return -1
+
             # Fetch relevant columns for search - normalization ensures robustness
             target_p_code = normalize_id(product_code)
             target_batch = normalize_id(batch_number)
             
+            # Use a slightly wider range to ensure we capture newly shifted columns
             res = self.service.spreadsheets().values().get(
-                spreadsheetId=self.spreadsheet_id, range="Stock Register!A:G"
+                spreadsheetId=self.spreadsheet_id, range="Stock Register!A:L"
             ).execute().get("values", [])
             
             for i, row in enumerate(res):
