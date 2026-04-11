@@ -253,6 +253,8 @@ class InventoryService:
         
         # If existing doc has a barcode link, keep it (unless we want to overwrite with newest)
         if existing_data.get('barcode_link'):
+            doc_data['barcode_link'] = existing_data['barcode_link']
+
         # [DEBUG-LOG] Final payload for inventory_positions
         print(f"🚀 [FIRESTORE-UPDATE] Collection: inventory_positions | Doc: {doc_ref.id}")
         import json
