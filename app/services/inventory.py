@@ -94,27 +94,11 @@ class InventoryService:
         # ── 2. PREPARE & MERGE DISTRIBUTIONS ──
         current_dists = existing_data.get('distributions', [])
         
-        # Calculate item-wide ratio for fallback calculations
-        # Handling "N/A" strings in total_qty and number_of_bags
-        raw_total_qty = existing_data.get('total_qty', 0)
-        raw_total_bags = existing_data.get('number_of_bags', 0)
-        
         def _parse_val(v):
             if str(v).strip().upper() == "N/A": return "N/A"
             return safe_float(v)
 
-        # 1-pass calculation of global ratio from input + baseline
-        global_qty = _parse_val(total_qty)
-        global_bags = _parse_val(number_of_bags)
-        
-        ratio = 1.0
-        if isinstance(global_qty, (int, float)) and isinstance(global_bags, (int, float)):
-            if global_qty > 0 and global_bags > 0:
-                ratio = global_qty / global_bags
-            elif global_qty > 0 and global_bags == 0:
-                # If weight exists but bags is 0, ratio is essentially the weight per 1 (implied) bag
-                ratio = global_qty 
-
+        # Simple: qty stores qty, bags stores bags. No weight/ratio conversion.
         merged_dists = current_dists.copy()
         for new_d in distributions:
             # Ensure incoming dist has an ID and a local batch reference
@@ -123,28 +107,16 @@ class InventoryService:
                 seed = f"{clean_code}-{new_d.get('warehouse')}-{new_d.get('location')}-{batch_ref}"
                 new_d['dist_id'] = generate_12_digit_hash(seed)
             
-            # [PRECISION-SYNC] Fill in missing metric if only one is provided
-            # if 'qty' is provided but 'bags' is missing (or vice-versa), use ratio
+            # Store exactly what was provided. No swapping, no conversion.
             n_qty = _parse_val(new_d.get('qty', 0))
             n_bags = _parse_val(new_d.get('bags', 0))
 
-            # [METRIC-SWAP-PROTECTION] For bag-based items, if bags > qty (and qty is not 0), 
-            # they are most likely swapped (e.g., 6920 bags / 173 kg instead of 173 bags / 6920 kg).
-            is_item_bag_based = 'bag' in str(unit).lower() or storage_type == 'BAG'
-            if is_item_bag_based and isinstance(n_qty, (int, float)) and isinstance(n_bags, (int, float)):
-                if n_bags > n_qty and n_qty > 0:
-                    print(f"🔄 [SWAP-PROTECTION] Inverting metrics for {product_code}: {n_bags} (B) / {n_qty} (Q) -> {n_qty} (B) / {n_bags} (Q)")
-                    n_qty, n_bags = n_bags, n_qty
-
-            if n_bags == "N/A" or n_qty == "N/A":
-                pass # Keep as N/A
-            elif isinstance(n_qty, (int, float)) and n_qty > 0 and (not isinstance(n_bags, (int, float)) or n_bags <= 0):
-                n_bags = n_qty / ratio if ratio > 0 else 0
-            elif isinstance(n_bags, (int, float)) and n_bags > 0 and (not isinstance(n_qty, (int, float)) or n_qty <= 0):
-                n_qty = n_bags * ratio
-
             new_d['qty'] = n_qty
-            new_d['bags'] = n_bags
+            # Only store bags if they are meaningful (not zero/absent)
+            if n_bags == "N/A" or (isinstance(n_bags, (int, float)) and n_bags > 0):
+                new_d['bags'] = n_bags
+            elif 'bags' in new_d:
+                del new_d['bags']
             
             if not new_d.get('batch_number') or str(new_d['batch_number']).strip() == "":
                 new_d['batch_number'] = batch_number
@@ -206,8 +178,8 @@ class InventoryService:
         else:
             calculated_total_bags = sum(total_bags_list)
         
-        # Override with top-level explicit N/A if provided
-        final_total_qty = "N/A" if str(unit).upper() == "N/A" else calculated_total_qty
+        # Determine final N/A states from explicit top-level flags
+        final_total_qty = "N/A" if str(total_qty).upper() == "N/A" else calculated_total_qty
         final_total_bags = "N/A" if str(number_of_bags).upper() == "N/A" else calculated_total_bags
         
         # Track all barcode IDs associated with this document
@@ -215,7 +187,7 @@ class InventoryService:
         if barcode_id not in barcode_ids:
             barcode_ids.append(barcode_id)
 
-        # Search index calculation (Human-Readable only)
+        # Search index calculation
         search_locations = []
         for d in merged_dists:
             if safe_float(d.get('qty', 0)) > 0:
@@ -225,7 +197,8 @@ class InventoryService:
                 if zn: search_locations.append(zn)
                 if wh and zn: search_locations.append(f"{wh} - {zn}")
 
-        is_item_bag_based = 'bag' in str(unit).lower() or storage_type == 'BAG'
+        # qty = the primary display quantity. Always = total_qty (qty is qty, bags are bags).
+        display_qty = final_total_qty
 
         doc_data = {
             'doc_id': doc_ref.id, 
@@ -233,14 +206,16 @@ class InventoryService:
             'barcode_ids': barcode_ids,
             'product_name': product_name,
             'product_code': product_code,
-            'qty': final_total_bags if is_item_bag_based else final_total_qty, # Unified key
+            'total_qty': final_total_qty,
+            'qty': display_qty,                  # Clean display key = total_qty always
+            'number_of_bags': final_total_bags,  # ALWAYS stored, never deleted
             'distributions': merged_dists,
             'location_ids': list(set([l for l in search_locations if l])),
             'min_stock_level': existing_data.get('min_stock_level', 0),
             'supplier_name': supplier_name or existing_data.get('supplier_name') or 'N/A',
             'batch_number': 'AGGREGATED' if is_merged else (batch_number or existing_data.get('batch_number')),
             'storage_type': storage_type,
-            'number_of_bags': final_total_bags,
+            'unit': unit if unit and str(unit).upper() != "N/A" else existing_data.get('unit', 'PCS'),
             'created_by': existing_data.get('created_by', user_name),
             'updated_by': user_name,
             'updated_at': int(time.time()),
@@ -248,18 +223,6 @@ class InventoryService:
             'sync_status': 'pending',
             'last_sync_error': None
         }
-
-        # [SCHEMA-STRICT] Remove redundant unit if N/A or bag-based
-        if unit and str(unit).upper() != "N/A" and not is_item_bag_based:
-            doc_data['unit'] = unit
-        
-        # [SCHEMA-STRICT] Remove redundant numeric field if identical
-        if is_item_bag_based:
-            doc_data['total_qty'] = final_total_bags
-            if 'number_of_bags' in doc_data: del doc_data['number_of_bags']
-        else:
-            doc_data['total_qty'] = final_total_qty
-            doc_data['number_of_bags'] = final_total_bags
         
         # If existing doc has a barcode link, keep it (unless we want to overwrite with newest)
         if existing_data.get('barcode_link'):
@@ -512,18 +475,17 @@ class InventoryService:
         for dist in distributions:
             if dist.get('dist_id') == loc_id:
                 curr_qty = float(dist.get('qty', 0))
-                curr_bags = float(dist.get('bags', 0)) if not is_item_bag_based else curr_qty
+                curr_bags = float(dist.get('bags', 0)) if 'bags' in dist else 0.0
                 
+                # Safety: can't deduct more than available
                 if curr_qty < qty - 0.001:
                     qty = curr_qty
                 
-                dist['qty'] = float(curr_qty - qty)
+                dist['qty'] = max(0.0, float(curr_qty - qty))
                 
-                # Update/Remove bags logic
-                if is_item_bag_based:
-                    if 'bags' in dist: del dist['bags']
-                else:
-                    dist['bags'] = float(max(0, curr_bags - bags_removed))
+                # Deduct bags proportionally (only if the dist tracks bags)
+                if 'bags' in dist:
+                    dist['bags'] = max(0.0, float(curr_bags - bags_removed))
                     
                 found = True
             new_distributions.append(dist)
@@ -532,14 +494,9 @@ class InventoryService:
             raise Exception(f"Position ID {loc_id} not found for this item.")
             
         old_total = float(data.get('total_qty', 0))
-        old_bags = float(data.get('number_of_bags', 0)) if not is_item_bag_based else old_total
-        new_total = float(max(0, old_total - qty))
-        
-        # Calculate new bags total
-        if is_item_bag_based:
-            new_bags = new_total
-        else:
-            new_bags = float(max(0, old_bags - bags_removed))
+        old_bags = float(data.get('number_of_bags', 0))
+        new_total = max(0.0, old_total - qty)
+        new_bags = max(0.0, old_bags - bags_removed)
          
         # Update searchable locations index
         search_locations = []
@@ -609,12 +566,12 @@ class InventoryService:
 
         transaction.update(doc_ref, {
             'distributions': new_distributions,
-            'total_qty': float(max(0, new_total)),
+            'total_qty': float(new_total),
+            'qty': float(new_total),
             'number_of_bags': float(new_bags),
             'location_ids': new_location_ids,
             'updated_at': int(time.time())
         })
-        # Return both the new total and the effective bags removed (so callers can sync to sheets correctly)
         return new_total, bags_removed
 
     def remove_stock_spatial(self, doc_id: str, loc_id: str, qty: float, user: dict = None, bags_removed: float = 0, skip_deduction: bool = False):
@@ -773,87 +730,41 @@ class InventoryService:
         dest_found = False
         new_distributions = []
         
-        # 1. Determine bags to move
+        # 1. Determine bags to move (only if bags exist in source)
         source_dist = next((d for d in distributions if d.get('dist_id') == from_dist_id), None)
         bags_to_move = float(bags) if bags > 0 else 0
         
         if bags_to_move <= 0 and source_dist:
             s_qty = float(source_dist.get('qty', 0))
-            s_bags = float(source_dist.get('bags', 0))
+            s_bags = float(source_dist.get('bags', 0)) if 'bags' in source_dist else 0.0
             if s_qty > 0 and s_bags > 0:
-                # Estimate bags based on proportion of qty being moved
-                bags_to_move = round((qty / s_qty) * s_bags)
-                # Safety: can't move more bags than exist
+                bags_to_move = round((qty / s_qty) * s_bags, 4)
                 bags_to_move = min(bags_to_move, s_bags)
         
         # 2. Execute movement within distributions
         for dist in distributions:
-            # Determine if it's a bag-based item (Checked per distribution for robustness)
-            unit_str = str(dist.get('unit_type', 'PCS')).lower()
-            is_bag_item = 'bag' in unit_str
-
             if dist.get('dist_id') == from_dist_id:
-                source_dist = dist # Track for new dist creation fallback
-                
-                # Qty Logic: Preserve N/A string if original was N/A
                 s_qty_val = dist.get('qty', 0)
                 if str(s_qty_val).strip() == "N/A":
                     dist['qty'] = "N/A"
                 else:
-                    # [FIX] Consolidated Metric Strategy:
-                    # If unit is bags, we rely solely on 'qty' in the map.
                     curr_qty = float(s_qty_val)
-                    curr_bags = float(dist.get('bags', 0)) if not is_bag_item else curr_qty
-                    
-                    if is_bag_item:
-                        # Robust Truth Extraction: If bags existed, ensure it was moved to qty
-                        if curr_qty == 0 and curr_bags > 0: curr_qty = curr_bags
-                        
-                        adj_qty = bags_to_move
-                        dist['qty'] = curr_qty - adj_qty
-                    else:
-                        adj_qty = qty
-                        dist['qty'] = curr_qty - adj_qty
-                        dist['bags'] = max(0, curr_bags - bags_to_move)
-
-                    if adj_qty > 0 and curr_qty < adj_qty - 0.001:
-                        raise Exception(f"Insufficient stock in source position (Has {curr_qty}, Needs {adj_qty}).")
+                    dist['qty'] = max(0.0, curr_qty - qty)
+                    if adj_qty := qty:
+                        if curr_qty < adj_qty - 0.001:
+                            raise Exception(f"Insufficient stock in source (Has {curr_qty}, Needs {adj_qty}).")
                 
-                # [SCHEMA-STRICT] Wipe bags if it's a bag item
-                if is_bag_item and 'bags' in dist: del dist['bags']
+                if 'bags' in dist:
+                    dist['bags'] = max(0.0, float(dist.get('bags', 0)) - bags_to_move)
                 
                 source_found = True
             
-            # Check if destination exists
-            if dist.get('warehouse') == to_warehouse and dist.get('location') == to_location:
-                # Handle Qty logic for destination
+            elif dist.get('warehouse') == to_warehouse and dist.get('location') == to_location:
                 d_qty_val = dist.get('qty', 0)
-                if str(d_qty_val).strip() == "N/A":
-                    dist['qty'] = "N/A"
-                else:
-                    d_adj_qty = qty
-                    d_unit_type = str(dist.get('unit_type', 'PCS')).lower()
-                    d_bags_val = float(dist.get('bags', 0))
-                    
-                    # [FIX] Force 1:1 sync for bag items 
-                    if is_bag_item: # Use the loop-scoped variable
-                        # Robust Truth Discovery
-                        d_source_truth = d_bags_val if d_bags_val > 0 else float(d_qty_val)
-                        if float(d_qty_val) != d_source_truth or d_bags_val != d_source_truth:
-                            d_qty_val = d_source_truth
-                        d_adj_qty = bags_to_move
-
-                    dist['qty'] = float(d_qty_val) + d_adj_qty
-                
-                if is_bag_item:
-                    if 'bags' in dist: del dist['bags']
-                else:
-                    # Handle Bags logic for non-bag destination
-                    d_bags_val = dist.get('bags', 0)
-                    if str(d_bags_val).strip() == "N/A":
-                        dist['bags'] = "N/A"
-                    else:
-                        dist['bags'] = float(d_bags_val) + bags_to_move
+                if str(d_qty_val).strip() != "N/A":
+                    dist['qty'] = float(d_qty_val) + qty
+                if 'bags' in dist:
+                    dist['bags'] = float(dist.get('bags', 0)) + bags_to_move
                 dest_found = True
             
             new_distributions.append(dist)
@@ -867,22 +778,20 @@ class InventoryService:
             seed = f"{clean_code}-{to_warehouse}-{to_location}-{batch_ref}"
             new_dist_id = generate_12_digit_hash(seed)
             
-            # [FIX] Consolidated Metric Strategy for Destination
             final_qty = "N/A" if str(source_dist.get('qty', 0)).strip() == "N/A" else qty
             unit_type = source_dist.get('unit_type', 'PCS')
-            is_bag_item = 'bag' in str(unit_type).lower()
             
             new_dist = {
                 'warehouse': to_warehouse, 
                 'location': to_location, 
-                'warehouse_id': to_warehouse_id, # [SCHEMA-ALIGNED]
+                'warehouse_id': to_warehouse_id,
                 'qty': final_qty, 
                 'dist_id': new_dist_id,
                 'batch_number': batch_ref,
                 'unit_type': unit_type
             }
-            
-            if not is_bag_item:
+            # Only add bags to new dist if the source tracked bags
+            if source_dist and 'bags' in source_dist:
                 new_dist['bags'] = "N/A" if str(source_dist.get('bags', 0)).strip() == "N/A" else bags_to_move
             
             new_distributions.append(new_dist)
@@ -898,15 +807,7 @@ class InventoryService:
         
         # 3. Recalculate Totals & location search index (Single Clean Pass)
         new_total_qty = sum(safe_float(d.get('qty', 0)) for d in cleaned_distributions)
-        
-        # Determine product metrics for final cleanup
-        # Note: We use existing document data 'storage_type' or distributions as a hint
-        item_unit = str(data.get('unit', '')).upper()
-        # Item is bag based if any distribution is bags OR top-level says so
-        is_bag_product = 'BAG' in str(data.get('storage_type', '')).upper() or \
-                         any('bag' in str(d.get('unit_type', '')).lower() for d in cleaned_distributions)
-
-        new_total_bags = new_total_qty if is_bag_product else sum(safe_float(d.get('bags', 0)) for d in cleaned_distributions)
+        new_total_bags = sum(safe_float(d.get('bags', 0)) for d in cleaned_distributions if 'bags' in d)
 
         search_locations = []
         for d in cleaned_distributions:
@@ -920,26 +821,14 @@ class InventoryService:
             
         new_location_ids = list(set([l for l in search_locations if l]))
 
-        # --- PREPARE LEAN UPDATE ---
-        update_map = {
+        transaction.update(doc_ref, {
             'distributions': cleaned_distributions,
             'location_ids': new_location_ids,
             'total_qty': new_total_qty,
+            'qty': new_total_qty,
+            'number_of_bags': new_total_bags,
             'updated_at': int(time.time())
-        }
-        
-        # SCHEMA-STRICT: Remove redundant unit
-        if item_unit == "N/A" or is_bag_product:
-            transaction.update(doc_ref, {'unit': firestore.DELETE_FIELD})
-        
-        # SCHEMA-STRICT: Handle redundant total bags
-        if is_bag_product:
-            transaction.update(doc_ref, {'number_of_bags': firestore.DELETE_FIELD})
-        else:
-            update_map['number_of_bags'] = new_total_bags
-
-        transaction.update(doc_ref, update_map)
-        # Update index for new positions
+        })
         inventory_service._update_cross_index(data.get('barcode_id'), cleaned_distributions)
         return True
 
