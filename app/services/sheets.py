@@ -1623,17 +1623,21 @@ class SheetsService:
                 if is_na_qty:
                     new_bal = "N/A"; new_in_qty = "N/A"; new_out_qty = "N/A"
                 else:
-                    new_bal = max(0.0, round(curr_bal + qty_delta, 4))
-                    new_in_qty = round(curr_in_qty + (max(0, qty_delta) if m_type == "IN" else 0.0), 4)
-                    new_out_qty = round(curr_out_qty + (abs(min(0, qty_delta)) if m_type == "OUT" else 0.0), 4)
+                    # FIX: Handle positive delta for both IN and OUT correctly
+                    adj_qty = -qty_delta if m_type == "OUT" else qty_delta
+                    new_bal = max(0.0, round(curr_bal + adj_qty, 4))
+                    new_in_qty = round(curr_in_qty + (qty_delta if m_type == "IN" else 0.0), 4)
+                    new_out_qty = round(curr_out_qty + (qty_delta if m_type == "OUT" else 0.0), 4)
 
                 if is_na_bags:
                     new_bags = "N/A"; new_in_bags = "N/A"; new_out_bags = "N/A"
                 else:
                     target_bags_delta = float(bags_delta if not str(bags_delta).upper() == "N/A" else 0)
-                    new_bags = max(0, int(round(curr_bags + target_bags_delta)))
-                    new_in_bags = int(curr_in_bags + (max(0, target_bags_delta) if m_type == "IN" else 0.0))
-                    new_out_bags = int(curr_out_bags + (abs(min(0, target_bags_delta)) if m_type == "OUT" else 0.0))
+                    # FIX: Handle positive bags delta correctly
+                    adj_bags = -target_bags_delta if m_type == "OUT" else target_bags_delta
+                    new_bags = max(0, int(round(curr_bags + adj_bags)))
+                    new_in_bags = int(curr_in_bags + (target_bags_delta if m_type == "IN" else 0.0))
+                    new_out_bags = int(curr_out_bags + (target_bags_delta if m_type == "OUT" else 0.0))
                 
                 update_range = f"Stock Summary!C{found_idx}:J{found_idx}"
                 row_vals = [
