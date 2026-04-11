@@ -112,9 +112,9 @@ class InventoryService:
             n_bags = _parse_val(new_d.get('bags', 0))
             
             # [FIX] Explicitly Capture Granular Metrics
-            n_q_unit = _parse_val(n_dist.get('qty_in_unit', 0))
+            n_q_unit = _parse_val(new_d.get('qty_in_unit', 0))
             new_d['qty_in_unit'] = n_q_unit
-            new_d['unit'] = n_dist.get('unit', 'PCS')
+            new_d['unit'] = new_d.get('unit', 'PCS')
 
             new_d['qty'] = n_qty
             # Only store bags if they are meaningful (not zero/absent)
