@@ -484,6 +484,14 @@ class InventoryService:
             raise Exception("Stock position not found in Firestore")
         
         data = snapshot.to_dict()
+
+        # [HELPER] N/A-Safe Subtraction
+        def safe_sub(old, sub):
+            if str(old).strip().upper() == "N/A": return "N/A"
+            try:
+                return max(0.0, float(old) - float(sub))
+            except: return "N/A"
+
         distributions = data.get('distributions', [])
         found = False
         
@@ -536,12 +544,6 @@ class InventoryService:
         if not found:
             raise Exception(f"Position ID {loc_id} not found for this item.")
             
-        def safe_sub(old, sub):
-            if str(old).strip().upper() == "N/A": return "N/A"
-            try:
-                return max(0.0, float(old) - float(sub))
-            except: return "N/A"
-
         old_total = data.get('total_qty', 0)
         old_bags = data.get('number_of_bags', 0)
         new_total = safe_sub(old_total, qty)
