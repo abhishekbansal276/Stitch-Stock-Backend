@@ -835,8 +835,9 @@ async def update_min_stock(
     
     try:
         min_level = float(payload.get('min_stock', 0))
-        inventory_service.set_min_stock_level(stock_item_id, min_level)
-        return {"status": "success", "min_stock_level": min_level}
+        min_bag = float(payload.get('min_bag', 0))
+        inventory_service.set_min_stock_level(stock_item_id, min_level, min_bag)
+        return {"status": "success", "min_stock_level": min_level, "min_bag_level": min_bag}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

@@ -709,10 +709,11 @@ class InventoryService:
             })
         return items
 
-    def set_min_stock_level(self, doc_id: str, min_level: float):
-        """Admin override for threshold alerts."""
+    def set_min_stock_level(self, doc_id: str, min_level: float, min_bag: float = 0.0):
+        """Admin override for threshold alerts (Quantity and Bags)."""
         self.collection.document(doc_id).update({
             'min_stock_level': min_level,
+            'min_bag_level': min_bag,
             'updated_at': int(time.time())
         })
 
