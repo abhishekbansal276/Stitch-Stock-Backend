@@ -793,10 +793,7 @@ async def transfer_stock_position(req: StockTransferRequest, user: dict = Depend
         print(f"🔄 [RELOC-CALC] From: {req.from_location} | Qty: {req.quantity} | Bags: {req.bags}")
         print(f"⚖️ [RELOC-CALC] Computed: bags_to_move={bags_to_move} | is_bag_item={is_bag_item}")
 
-        if is_bag_item:
-            # Sheets Strategy: Keep Qty as N/A in the Movements ledger for bag items 
-            final_qty_log = "N/A"
-        elif st_type == 'UNIT' and bags_to_move <= 0:
+        if st_type == 'UNIT' and bags_to_move <= 0:
             # Only use N/A if it's a UNIT item AND no bags were calculated/provided
             final_bags_log = "N/A"
 

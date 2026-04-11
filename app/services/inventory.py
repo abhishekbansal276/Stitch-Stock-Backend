@@ -490,6 +490,8 @@ class InventoryService:
         is_item_bag_based = 'bag' in str(data.get('unit', '')).lower() or data.get('storage_type') == 'BAG'
         print(f"📊 [BACKEND-CALC] Received for {doc_ref.id}: qty={qty}, bags_removed={bags_removed}, is_bag_based={is_item_bag_based}")
         
+        old_total_weight = data.get('total_qty_in_unit', 0)
+        
         if not is_item_bag_based and bags_removed <= 0:
             total_qty = float(data.get('total_qty', 0))
             total_bags = float(data.get('number_of_bags', 0))
@@ -618,8 +620,12 @@ class InventoryService:
         import json
         print(json.dumps(update_payload, indent=2, default=str))
 
+        # Calculate actual weight delta
+        new_total_weight = sum(safe_float(d.get('qty_in_unit', 0)) for d in new_distributions)
+        weight_removed = float(old_total_weight) - float(new_total_weight)
+
         transaction.update(doc_ref, update_payload)
-        return new_total, bags_removed
+        return new_total, bags_removed, weight_removed
 
     def remove_stock_spatial(self, doc_id: str, loc_id: str, qty: float, user: dict = None, bags_removed: float = 0, skip_deduction: bool = False):
         """Wrapper to perform a safe atomic deduction or just an audit/alert check."""
@@ -634,9 +640,9 @@ class InventoryService:
         else:
             print(f"⚡ [DEDUCTION_MODE] Stock {doc_id} removal from location {loc_id}")
             transaction = db.transaction()
-            # FIX: Capture the return tuple to ensure calculated bags propagate to Sheets
-            new_total, bags_removed = self.deduct_from_location(transaction, doc_ref, loc_id, qty, bags_removed=bags_removed)
-            print(f"✅ [DEDUCTION_DONE] New Total: {new_total} | Effective Bags Removed: {bags_removed}")
+            # FIX: Capture the return tuple to ensure calculated bags & weight propagate to Sheets
+            new_total, bags_removed, weight_removed = self.deduct_from_location(transaction, doc_ref, loc_id, qty, bags_removed=bags_removed)
+            print(f"✅ [DEDUCTION_DONE] New Total: {new_total} | Bags Removed: {bags_removed} | Weight Removed: {weight_removed}")
         
         # ── RELIABLE HYBRID SYNC ──
         try:
@@ -651,7 +657,7 @@ class InventoryService:
                 "barcode_id": data.get('barcode_id', doc_id),
                 "product_code": data.get('product_code', ''),
                 "batch_number": data.get('batch_number', ''),
-                "qty": qty,
+                "qty": weight_removed if is_item_bag_based else qty, # If bag based, qty_removed is the weight.
                 "bags_removed": bags_removed,
                 "warehouse": dist.get('warehouse', 'Main Floor'),
                 "location": dist.get('location', 'General'),

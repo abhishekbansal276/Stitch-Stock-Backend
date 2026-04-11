@@ -1453,7 +1453,7 @@ class SheetsService:
                 
                 # Check for bag-based items aggressively to prevent numeric seepage into Qty
                 is_bag_item = 'BAG' in str(raw_unit_res).upper() or str(raw_st_res).upper() == 'BAG'
-                is_qty_na = str(raw_qty_res).strip().upper() == "N/A" or is_bag_item
+                is_qty_na = str(raw_qty_res).strip().upper() == "N/A"
                 is_bags_na = str(raw_bags_res).strip().upper() == "N/A"
                 
                 curr_qty = self._to_float(raw_qty_res)
