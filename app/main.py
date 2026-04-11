@@ -736,7 +736,7 @@ async def transfer_stock_position(req: StockTransferRequest, user: dict = Depend
                 current_qty = float(from_dist.get('qty', 0))
                 current_bags = float(from_dist.get('number_of_bags') or from_dist.get('bags') or 0)
                 ratio = req.quantity / current_qty
-                bags_to_move = int(round(current_bags * ratio))
+                bags_to_move = float(round(current_bags * ratio, 4))
 
         # Determine if we should record "N/A" for metrics in sheets log
         final_qty_log = req.quantity

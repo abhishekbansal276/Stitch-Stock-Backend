@@ -1474,7 +1474,7 @@ class SheetsService:
 
                 # Logic: If it was N/A in register, it stays N/A. Otherwise subtract.
                 new_qty = "N/A" if is_qty_na else max(0.0, curr_qty - qty)
-                new_bags = "N/A" if is_bags_na else max(0, int(round(curr_bags)) - int(round(effective_bags_removed)))
+                new_bags = "N/A" if is_bags_na else max(0.0, float(round(curr_bags - effective_bags_removed, 4)))
 
                 # Batch update the row
                 self.service.spreadsheets().values().batchUpdate(
