@@ -1731,7 +1731,7 @@ class SheetsService:
     def _clean_num(self, val) -> any:
         """Removes trailing .0 but keeps other decimals for professional Sheets look."""
         if val is None: return 0
-        if str(val).strip() == "N/A": return "N/A" # [NEW]
+        if str(val).strip().upper() == "N/A": return "N/A"
         try:
             v = round(float(val), 6)
             if v == int(v):

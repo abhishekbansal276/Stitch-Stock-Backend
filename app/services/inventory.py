@@ -534,10 +534,16 @@ class InventoryService:
         if not found:
             raise Exception(f"Position ID {loc_id} not found for this item.")
             
-        old_total = float(data.get('total_qty', 0))
-        old_bags = float(data.get('number_of_bags', 0))
-        new_total = max(0.0, old_total - qty)
-        new_bags = max(0.0, old_bags - bags_removed)
+        def safe_sub(old, sub):
+            if str(old).strip().upper() == "N/A": return "N/A"
+            try:
+                return max(0.0, float(old) - float(sub))
+            except: return "N/A"
+
+        old_total = data.get('total_qty', 0)
+        old_bags = data.get('number_of_bags', 0)
+        new_total = safe_sub(old_total, qty)
+        new_bags = safe_sub(old_bags, bags_removed)
          
         # Update searchable locations index
         search_locations = []
@@ -607,9 +613,9 @@ class InventoryService:
 
         update_payload = {
             'distributions': new_distributions,
-            'total_qty': float(new_total),
-            'qty': float(new_total),
-            'number_of_bags': float(new_bags),
+            'total_qty': new_total if str(new_total).upper() == "N/A" else float(new_total),
+            'qty': new_total if str(new_total).upper() == "N/A" else float(new_total),
+            'number_of_bags': new_bags if str(new_bags).upper() == "N/A" else float(new_bags),
             'total_qty_in_unit': sum(safe_float(d.get('qty_in_unit', 0)) for d in new_distributions),
             'location_ids': new_location_ids,
             'updated_at': int(time.time())
@@ -622,7 +628,10 @@ class InventoryService:
 
         # Calculate actual weight delta
         new_total_weight = sum(safe_float(d.get('qty_in_unit', 0)) for d in new_distributions)
-        weight_removed = float(old_total_weight) - float(new_total_weight)
+        
+        weight_removed = 0.0
+        if str(old_total_weight).strip().upper() != "N/A":
+            weight_removed = float(old_total_weight) - float(new_total_weight)
 
         transaction.update(doc_ref, update_payload)
         return new_total, bags_removed, weight_removed
