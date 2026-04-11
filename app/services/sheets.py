@@ -14,7 +14,7 @@ from googleapiclient.discovery import build
 from google.cloud.firestore_v1.base_query import FieldFilter
 from google.auth import exceptions as auth_exceptions
 from app.services.firebase import db, clean_private_key, BASE_DIR, get_service_account_info
-from app.utils import normalize_id
+from app.utils import normalize_id, safe_float, safe_int
 from app.services.fcm_service import fcm_service
 
 
