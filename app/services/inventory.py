@@ -114,7 +114,7 @@ class InventoryService:
             # [FIX] Explicitly Capture Granular Metrics
             n_q_unit = _parse_val(new_d.get('qty_in_unit', 0))
             new_d['qty_in_unit'] = n_q_unit
-            new_d['unit'] = new_d.get('unit', 'PCS')
+            new_d['unit'] = new_d.get('unit') or unit or 'PCS'
 
             new_d['qty'] = n_qty
             # Only store bags if they are meaningful (not zero/absent)
@@ -242,7 +242,6 @@ class InventoryService:
             'supplier_name': supplier_name or existing_data.get('supplier_name') or 'N/A',
             'batch_number': 'AGGREGATED' if is_merged else (batch_number or existing_data.get('batch_number')),
             'storage_type': storage_type,
-            'unit': unit if unit and str(unit).upper() != "N/A" else existing_data.get('unit', 'PCS'),
             'created_by': existing_data.get('created_by', user_name),
             'updated_by': user_name,
             'updated_at': int(time.time()),
