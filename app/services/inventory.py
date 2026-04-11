@@ -197,8 +197,17 @@ class InventoryService:
                 if zn: search_locations.append(zn)
                 if wh and zn: search_locations.append(f"{wh} - {zn}")
 
-        # qty = the primary display quantity. Always = total_qty (qty is qty, bags are bags).
-        display_qty = final_total_qty
+        # display_qty = the primary display quantity. 
+        # Favor numeric total_qty first, fallback to number_of_bags if total_qty is N/A.
+        if isinstance(final_total_qty, (int, float)) and final_total_qty > 0:
+            display_qty = final_total_qty
+            display_unit = unit if unit and str(unit).upper() != "N/A" else "PCS"
+        elif isinstance(final_total_bags, (int, float)) and final_total_bags > 0:
+            display_qty = final_total_bags
+            display_unit = "BAGS"
+        else:
+            display_qty = "N/A"
+            display_unit = "N/A"
 
         doc_data = {
             'doc_id': doc_ref.id, 
@@ -206,9 +215,10 @@ class InventoryService:
             'barcode_ids': barcode_ids,
             'product_name': product_name,
             'product_code': product_code,
-            'total_qty': final_total_qty,
-            'qty': display_qty,                  # Clean display key = total_qty always
-            'number_of_bags': final_total_bags,  # ALWAYS stored, never deleted
+            'total_qty': final_total_qty,        # Raw state (numeric or N/A)
+            'number_of_bags': final_total_bags,  # Raw state (numeric or N/A)
+            'qty': display_qty,                  # Unified display key
+            'unit': display_unit,                # Integrated display unit
             'distributions': merged_dists,
             'location_ids': list(set([l for l in search_locations if l])),
             'min_stock_level': existing_data.get('min_stock_level', 0),
@@ -809,6 +819,17 @@ class InventoryService:
         new_total_qty = sum(safe_float(d.get('qty', 0)) for d in cleaned_distributions)
         new_total_bags = sum(safe_float(d.get('bags', 0)) for d in cleaned_distributions if 'bags' in d)
 
+        # Smart Display logic for Transfer
+        # If the original document had N/A for qty, we continue to favor bags for display
+        is_qty_na = str(data.get('total_qty', 0)).strip().upper() == "N/A"
+        
+        if not is_qty_na and new_total_qty > 0:
+            display_qty = new_total_qty
+        elif new_total_bags > 0:
+            display_qty = new_total_bags
+        else:
+            display_qty = "N/A"
+
         search_locations = []
         for d in cleaned_distributions:
             wh = d.get('warehouse')
@@ -821,14 +842,15 @@ class InventoryService:
             
         new_location_ids = list(set([l for l in search_locations if l]))
 
-        transaction.update(doc_ref, {
+        update_map = {
             'distributions': cleaned_distributions,
             'location_ids': new_location_ids,
-            'total_qty': new_total_qty,
-            'qty': new_total_qty,
+            'total_qty': "N/A" if is_qty_na else new_total_qty,
+            'qty': display_qty,
             'number_of_bags': new_total_bags,
             'updated_at': int(time.time())
-        })
+        }
+        transaction.update(doc_ref, update_map)
         inventory_service._update_cross_index(data.get('barcode_id'), cleaned_distributions)
         return True
 
