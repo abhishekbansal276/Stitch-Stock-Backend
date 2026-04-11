@@ -488,7 +488,7 @@ async def get_stock_item(
         
     pos = result.get('item')
 
-    # 2. Get details (Firestore is Authoritative for existing items, Sheets for metadata backup)
+    # 2. SEAMLESS DISCOVERY: Firestore is the High-Speed Source of Truth
     item = {}
     if pos:
         # Seed from Firestore
@@ -507,20 +507,25 @@ async def get_stock_item(
             'storage_type': pos.get('storage_type', 'UNIT'),
             'barcode_link': pos.get('barcode_link')
         }
+
+    # 3. CONDITIONAL LEAN LOOKUP: Only hit Sheets if Firestore metadata is incomplete
+    # This optimization removes ~1-2s of latency during scanning.
+    needs_metadata = not item.get('product_name') or not item.get('product_code') or item.get('supplier_name') == 'N/A'
     
-    # Complement with Sheets data if missing or to ensure master metadata sync
-    sheets_id = pos.get('barcode_id', stock_item_id) if pos else stock_item_id
-    sheets_item = sheets_service.get_stock_item(sheets_id)
-    
-    if sheets_item:
-        # Merge sheets data into item, prioritizing sheets for master naming / supplier if available
-        for key in ['product_name', 'product_code', 'unit', 'supplier_name', 'batch_number']:
-            if sheets_item.get(key) and (not item.get(key) or item.get(key) == 'N/A'):
-                item[key] = sheets_item[key]
+    if not pos or needs_metadata:
+        sheets_id = pos.get('barcode_id', stock_item_id) if pos else stock_item_id
+        print(f"📡 [LATENCY-FALLBACK] Metadata incomplete in Firestore. Fetching from Sheets for ID: {sheets_id}")
+        sheets_item = sheets_service.get_stock_item(sheets_id)
         
-        # Ensure backward compatibility for UI (item_name alias)
-        if not item.get('item_name'):
-            item['item_name'] = sheets_item.get('item_name')
+        if sheets_item:
+            # Merge sheets data into item, prioritizing sheets for master naming / supplier if available
+            for key in ['product_name', 'product_code', 'unit', 'supplier_name', 'batch_number']:
+                if sheets_item.get(key) and (not item.get(key) or item.get(key) == 'N/A'):
+                    item[key] = sheets_item[key]
+            
+            # Ensure backward compatibility for UI (item_name alias)
+            if not item.get('item_name'):
+                item['item_name'] = sheets_item.get('item_name')
 
     if not item and not pos:
         raise HTTPException(status_code=404, detail="Stock item not found")
