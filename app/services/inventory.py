@@ -697,6 +697,7 @@ class InventoryService:
             data = doc.to_dict()
             items.append({
                 'barcode_id': data['barcode_id'],
+                'doc_id': doc.id,
                 'product_name': data['product_name'],
                 'product_code': data['product_code'],
                 'total_qty': data['total_qty'],
