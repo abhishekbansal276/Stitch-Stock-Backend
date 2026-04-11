@@ -253,7 +253,10 @@ class InventoryService:
         
         # If existing doc has a barcode link, keep it (unless we want to overwrite with newest)
         if existing_data.get('barcode_link'):
-            doc_data['barcode_link'] = existing_data['barcode_link']
+        # [DEBUG-LOG] Final payload for inventory_positions
+        print(f"🚀 [FIRESTORE-UPDATE] Collection: inventory_positions | Doc: {doc_ref.id}")
+        import json
+        print(json.dumps(doc_data, indent=2, default=str))
 
         doc_ref.set(doc_data)
         
@@ -601,7 +604,7 @@ class InventoryService:
         else:
              print(f"✅ [ALERT-OK] Stock remains healthy.")
 
-        transaction.update(doc_ref, {
+        update_payload = {
             'distributions': new_distributions,
             'total_qty': float(new_total),
             'qty': float(new_total),
@@ -609,7 +612,14 @@ class InventoryService:
             'total_qty_in_unit': sum(safe_float(d.get('qty_in_unit', 0)) for d in new_distributions),
             'location_ids': new_location_ids,
             'updated_at': int(time.time())
-        })
+        }
+
+        # [DEBUG-LOG] Deduction Update
+        print(f"📉 [FIRESTORE-UPDATE] Deduction on {doc_ref.id}")
+        import json
+        print(json.dumps(update_payload, indent=2, default=str))
+
+        transaction.update(doc_ref, update_payload)
         return new_total, bags_removed
 
     def remove_stock_spatial(self, doc_id: str, loc_id: str, qty: float, user: dict = None, bags_removed: float = 0, skip_deduction: bool = False):
@@ -895,6 +905,11 @@ class InventoryService:
             'total_qty_in_unit': sum(safe_float(d.get('qty_in_unit', 0)) for d in cleaned_distributions),
             'updated_at': int(time.time())
         }
+        # [DEBUG-LOG] Transfer Update
+        print(f"🔄 [FIRESTORE-UPDATE] Transfer on {doc_ref.id}")
+        import json
+        print(json.dumps(update_map, indent=2, default=str))
+
         transaction.update(doc_ref, update_map)
         inventory_service._update_cross_index(data.get('barcode_id'), cleaned_distributions)
         return True
