@@ -32,6 +32,7 @@ class TaxItem(BaseModel):
 class InvoiceHeader(BaseModel):
     date: str = Field(alias="Date", description="Invoice date in YYYY-MM-DD format")
     invoice_number: str = Field(alias="Invoice Number", description="Invoice/Bill/Challan number")
+    supplier_name: Optional[str] = Field(alias="Supplier Name", description="Name of the vendor/supplier")
     transporter_name: Optional[str] = Field(alias="Transporter Name", description="Name of the transport company if available")
 
 class InvoiceItem(BaseModel):
@@ -454,6 +455,7 @@ COMMAND — Return the data in the following standardized JSON format:
   "header": {
     "Date": "YYYY-MM-DD",
     "Invoice Number": "...",
+    "Supplier Name": "...",
     "Transporter Name": "..."
   },
   "items": [

@@ -55,7 +55,7 @@ class SheetsService:
     # ── SCHEMA DEFINITIONS ────────────────────────────────────────────────────
     BASE_SCHEMA = [
         # 1. Bill Header
-        "Date", "Invoice Number", "Transporter Name", "Remarks",
+        "Date", "Invoice Number", "Supplier Name", "Transporter Name", "Remarks",
         # 2. Product Details
         "Product Name", "Product Code", "Batch Number",
         # 3. Quantity / Packaging
@@ -78,22 +78,23 @@ class SheetsService:
     REGISTER_COL_WIDTHS = {
         0: 110,   # Date
         1: 150,   # Invoice Number
-        2: 160,   # Transporter Name
-        3: 200,   # Remarks
-        4: 220,   # Product Name
-        5: 130,   # Product Code
-        6: 130,   # Batch Number
-        7: 130,   # Quantity Received
-        8: 80,    # Unit
-        9: 110,   # Number of Bags
-        10: 120,  # Storage Type
-        11: 130,  # Rate per Unit
-        12: 180,  # Barcode Link
-        13: 170,  # Barcode ID
-        14: 150,  # Created At
-        15: 130,  # Created By
-        16: 150,  # Updated At
-        17: 130,  # Updated By
+        2: 180,   # Supplier Name
+        3: 160,   # Transporter Name
+        4: 200,   # Remarks
+        5: 220,   # Product Name
+        6: 130,   # Product Code
+        7: 130,   # Batch Number
+        8: 130,   # Quantity Received
+        9: 80,    # Unit
+        10: 110,  # Number of Bags
+        11: 120,  # Storage Type
+        12: 130,  # Rate per Unit
+        13: 180,  # Barcode Link
+        14: 170,  # Barcode ID
+        15: 150,  # Created At
+        16: 130,  # Created By
+        17: 150,  # Updated At
+        18: 130,  # Updated By
     }
     MOVEMENTS_COL_WIDTHS = {
         0: 160, 1: 200, 2: 90, 3: 100, 4: 100, 5: 160, 6: 160,
