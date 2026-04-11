@@ -505,27 +505,29 @@ class InventoryService:
         
         for dist in distributions:
             if dist.get('dist_id') == loc_id:
-                curr_qty = float(dist.get('qty', 0))
-                curr_bags = float(dist.get('bags', 0)) if 'bags' in dist else 0.0
-                curr_item_unit_qty = float(dist.get('qty_in_unit', 0))
+                # [N/A-SAFE] Distribution-level metric handling
+                curr_qty_raw = dist.get('qty', 0)
+                curr_bags_raw = dist.get('bags', 0)
+                curr_item_unit_qty = safe_float(dist.get('qty_in_unit', 0))
                 
                 # Proportional unit qty deduction
                 unit_qty_removed = 0.0
-                if curr_qty > 0:
-                    unit_qty_removed = (qty / curr_qty) * curr_item_unit_qty
+                curr_qty_num = safe_float(curr_qty_raw)
+                if curr_qty_num > 0:
+                    unit_qty_removed = (qty / curr_qty_num) * curr_item_unit_qty
                 
                 # Safety: can't deduct more than available
-                if curr_qty < qty - 0.001:
-                    qty = curr_qty
+                if curr_qty_num > 0 and curr_qty_num < qty - 0.001:
+                    qty = curr_qty_num
                 
-                dist['qty'] = max(0.0, float(curr_qty - qty))
+                # Apply safe subtraction to each field
+                dist['qty'] = safe_sub(curr_qty_raw, qty)
                 
-                # Deduct bags proportionally (only if the dist tracks bags)
                 if 'bags' in dist:
-                    dist['bags'] = max(0.0, float(curr_bags - bags_removed))
+                    dist['bags'] = safe_sub(curr_bags_raw, bags_removed)
                 
-                # Deduct unit qty
                 if 'qty_in_unit' in dist:
+                    # Metric weight is always numeric; if it was N/A, safe_float makes it 0.0
                     dist['qty_in_unit'] = max(0.0, float(curr_item_unit_qty - unit_qty_removed))
                     
                 found = True
