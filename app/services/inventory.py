@@ -1,7 +1,7 @@
 import time
 import uuid
 import re
-from typing import List, Dict
+from typing import List, Dict, Any
 from app.services.firebase import db
 from google.cloud.firestore_v1.base_query import FieldFilter
 from google.cloud import firestore
