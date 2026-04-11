@@ -482,27 +482,48 @@ async def get_stock_item(
     clean_id = normalize_id(stock_item_id)
 
     # 1. Use robust discovery to find Position in Firestore (resolves barcode -> BATCH doc)
-    # Search with clean ID first, fallback to raw
     result = inventory_service.find_by_dist_id(clean_id)
     if not result:
         result = inventory_service.find_by_dist_id(stock_item_id)
         
     pos = result.get('item')
-    search_id = pos.get('barcode_id', clean_id) if pos else clean_id
 
-    # 2. Get master details from Sheets
-    item = sheets_service.get_stock_item(search_id)
-    if not item:
-        # Final fallback check with raw ID if sheets lookup failed with clean ID
-        item = sheets_service.get_stock_item(stock_item_id)
-        
-    if not item:
-        raise HTTPException(status_code=404, detail="Stock item not found")
-        
+    # 2. Get details (Firestore is Authoritative for existing items, Sheets for metadata backup)
+    item = {}
     if pos:
-        item['distributions'] = pos.get('distributions', [])
-        item['doc_id'] = pos.get('doc_id')
-        item['barcode_ids'] = pos.get('barcode_ids', [])
+        # Seed from Firestore
+        item = {
+            'item_name': pos.get('product_name'),
+            'product_name': pos.get('product_name'),
+            'product_code': pos.get('product_code'),
+            'unit': pos.get('unit', 'PCS'),
+            'total_qty': pos.get('total_qty', 0),
+            'doc_id': pos.get('doc_id'),
+            'barcode_id': pos.get('barcode_id'),
+            'barcode_ids': pos.get('barcode_ids', []),
+            'batch_number': pos.get('batch_number'),
+            'supplier_name': pos.get('supplier_name', 'N/A'),
+            'distributions': pos.get('distributions', []),
+            'storage_type': pos.get('storage_type', 'UNIT'),
+            'barcode_link': pos.get('barcode_link')
+        }
+    
+    # Complement with Sheets data if missing or to ensure master metadata sync
+    sheets_id = pos.get('barcode_id', stock_item_id) if pos else stock_item_id
+    sheets_item = sheets_service.get_stock_item(sheets_id)
+    
+    if sheets_item:
+        # Merge sheets data into item, prioritizing sheets for master naming / supplier if available
+        for key in ['product_name', 'product_code', 'unit', 'supplier_name', 'batch_number']:
+            if sheets_item.get(key) and (not item.get(key) or item.get(key) == 'N/A'):
+                item[key] = sheets_item[key]
+        
+        # Ensure backward compatibility for UI (item_name alias)
+        if not item.get('item_name'):
+            item['item_name'] = sheets_item.get('item_name')
+
+    if not item and not pos:
+        raise HTTPException(status_code=404, detail="Stock item not found")
         
         # Merge missing metadata from Firestore Source of Truth
         if not item.get('supplier_name'):

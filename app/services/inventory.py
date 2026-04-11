@@ -128,6 +128,14 @@ class InventoryService:
             n_qty = _parse_val(new_d.get('qty', 0))
             n_bags = _parse_val(new_d.get('bags', 0))
 
+            # [METRIC-SWAP-PROTECTION] For bag-based items, if bags > qty (and qty is not 0), 
+            # they are most likely swapped (e.g., 6920 bags / 173 kg instead of 173 bags / 6920 kg).
+            is_item_bag_based = 'bag' in str(unit).lower() or storage_type == 'BAG'
+            if is_item_bag_based and isinstance(n_qty, (int, float)) and isinstance(n_bags, (int, float)):
+                if n_bags > n_qty and n_qty > 0:
+                    print(f"🔄 [SWAP-PROTECTION] Inverting metrics for {product_code}: {n_bags} (B) / {n_qty} (Q) -> {n_qty} (B) / {n_bags} (Q)")
+                    n_qty, n_bags = n_bags, n_qty
+
             if n_bags == "N/A" or n_qty == "N/A":
                 pass # Keep as N/A
             elif isinstance(n_qty, (int, float)) and n_qty > 0 and (not isinstance(n_bags, (int, float)) or n_bags <= 0):
