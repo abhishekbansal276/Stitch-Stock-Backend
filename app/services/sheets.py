@@ -209,7 +209,8 @@ class SheetsService:
         try:
             if title == "Stock Register":
                 super_row = [
-                    "BILL HEADER", "", "", "",
+                    "TRANSACTION DETAILS", "", 
+                    "TRACKING DETAILS", "", "",
                     "PRODUCT DETAILS", "", "",
                     "QUANTITY / PACKAGING", "", "", "",
                     "FINANCIALS",
@@ -312,8 +313,9 @@ class SheetsService:
             })
 
             if title == "Stock Register":
-                # Grouped: Header(4), Products(3), Qty(4), Finance(1), System(6)
-                super_spans = [(0, 4), (4, 7), (7, 11), (11, 12), (12, 18)]
+                # Grouped Mapping: 
+                # Transaction(2) Tracking(3) Products(3) Qty(4) Finance(1) System(6)
+                super_spans = [(0, 2), (2, 5), (5, 8), (8, 12), (12, 13), (13, 19)]
             elif title == "Stock Movements":
                 super_spans = [(0, 2), (2, 7), (7, 12)]
             elif title == "Stock Summary":

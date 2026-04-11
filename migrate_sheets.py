@@ -100,14 +100,24 @@ def migrate():
             ).execute()
             print("Column physical insertion complete.")
 
-        # 3. Refresh Styles
-        print("Refreshing styles...")
+        # 3. Refresh Headers and Styles (Force-sync)
+        print("Force-updating headers and re-applying industrial styling...")
+        for title in ["Stock Register", "Stock Movements", "Stock Summary"]:
+            schema = {
+                "Stock Register":  sheets_service.BASE_SCHEMA,
+                "Stock Movements": sheets_service.MOVEMENTS_SCHEMA,
+                "Stock Summary":   sheets_service.SUMMARY_SCHEMA,
+            }.get(title)
+            if schema:
+                print(f"Refreshing {title}...")
+                sheets_service._write_headers(title, schema)
+        
         sheets_service.beautify_all()
-        print("MIGRATION SUCCESSFUL: Sheet is now schema-aligned and beautified.")
+        print("MIGRATION SUCCESSFUL: Sheet headers and styles are now perfectly aligned.")
         print("="*50 + "\n")
         
     except Exception as e:
-        print(f"❌ MIGRATION FAILED: {e}")
+        print(f"MIGRATION FAILED: {e}")
         import traceback
         traceback.print_exc()
 
