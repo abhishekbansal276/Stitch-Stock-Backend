@@ -110,6 +110,11 @@ class InventoryService:
             # Store exactly what was provided. No swapping, no conversion.
             n_qty = _parse_val(new_d.get('qty', 0))
             n_bags = _parse_val(new_d.get('bags', 0))
+            
+            # [FIX] Explicitly Capture Granular Metrics
+            n_q_unit = _parse_val(n_dist.get('qty_in_unit', 0))
+            new_d['qty_in_unit'] = n_q_unit
+            new_d['unit'] = n_dist.get('unit', 'PCS')
 
             new_d['qty'] = n_qty
             # Only store bags if they are meaningful (not zero/absent)
@@ -133,6 +138,7 @@ class InventoryService:
                 # Merge logic handling N/A
                 o_qty = _parse_val(merged_dists[found_idx].get('qty', 0))
                 o_bags = _parse_val(merged_dists[found_idx].get('bags', 0))
+                o_q_unit = _parse_val(merged_dists[found_idx].get('qty_in_unit', 0))
                 
                 if n_qty == "N/A" or o_qty == "N/A": 
                     merged_dists[found_idx]['qty'] = "N/A"
@@ -143,6 +149,14 @@ class InventoryService:
                     merged_dists[found_idx]['bags'] = "N/A"
                 else:
                     merged_dists[found_idx]['bags'] = safe_float(o_bags) + safe_float(n_bags)
+
+                if n_q_unit == "N/A" or o_q_unit == "N/A":
+                    merged_dists[found_idx]['qty_in_unit'] = "N/A"
+                else:
+                    merged_dists[found_idx]['qty_in_unit'] = safe_float(o_q_unit) + safe_float(n_q_unit)
+                
+                if new_d.get('unit'): 
+                    merged_dists[found_idx]['unit'] = new_d['unit']
             else:
                 merged_dists.append(new_d)
 
