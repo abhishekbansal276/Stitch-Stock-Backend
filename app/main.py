@@ -549,6 +549,26 @@ async def get_stock_item(
         if not item.get('batch_number'):
             item['batch_number'] = pos.get('batch_number')
         
+        # 4. PROACTIVE BATCH DISCOVERY: Find all other batches for this product
+        # This makes the scanning response self-contained and resolves UI visibility issues.
+        p_code = item.get('product_code')
+        other_batches = []
+        if p_code:
+            try:
+                # Query all documents with the same product code
+                related_docs = inventory_service.collection.where(filter=FieldFilter('product_code', '==', p_code.strip().upper())).get()
+                for doc in related_docs:
+                    d_data = doc.to_dict()
+                    # Exclude the current primary document
+                    if d_data.get('doc_id') != item.get('doc_id'):
+                        other_batches.append(d_data)
+                
+                print(f"🔗 [BATCH-LINKING] Found {len(other_batches)} other batches for {p_code}")
+            except Exception as e:
+                print(f"⚠️ Batch Linking Error: {e}")
+                
+        item['other_batches'] = other_batches
+        
     return item
 
 @app.post("/stock/{stock_item_id}/remove")
