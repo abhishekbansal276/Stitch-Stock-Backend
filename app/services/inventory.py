@@ -251,15 +251,13 @@ class InventoryService:
             'last_sync_error': None
         }
         
-        # If existing doc has a barcode link, keep it (unless we want to overwrite with newest)
+        # Cleanup legacy doc data
         if existing_data.get('barcode_link'):
             doc_data['barcode_link'] = existing_data['barcode_link']
-
-        # [DEBUG-LOG] Final payload for inventory_positions
-        print(f"🚀 [FIRESTORE-UPDATE] Collection: inventory_positions | Doc: {doc_ref.id}")
+        # [DEBUG-LOG] Final Firestore Payload
+        print(f"🚀 [FIRESTORE-UPDATE] {doc_ref.id}")
         import json
         print(json.dumps(doc_data, indent=2, default=str))
-
         doc_ref.set(doc_data)
         
         # ── 4. SEARCH & DESTROY: Cleanup legacy docs ──
