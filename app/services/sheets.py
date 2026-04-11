@@ -1466,9 +1466,15 @@ class SheetsService:
                 curr_qty = self._to_float(raw_qty_res)
                 curr_bags = self._to_float(raw_bags_res)
                 
+                # [LATE-FALLBACK] If bags_removed is 0, but Sheet has bags, calculate proportion
+                effective_bags_removed = bags_removed
+                if not is_bags_na and safe_float(bags_removed) == 0 and curr_bags > 0 and curr_qty > 0 and not is_bag_item:
+                    effective_bags_removed = (qty / curr_qty) * curr_bags
+                    print(f"📊 [SHEETS-CALC] Late Fallback: {qty}/{curr_qty} * {curr_bags} = {effective_bags_removed} bags")
+
                 # Logic: If it was N/A in register, it stays N/A. Otherwise subtract.
                 new_qty = "N/A" if is_qty_na else max(0.0, curr_qty - qty)
-                new_bags = "N/A" if is_bags_na else max(0, int(round(curr_bags)) - int(round(bags_removed)))
+                new_bags = "N/A" if is_bags_na else max(0, int(round(curr_bags)) - int(round(effective_bags_removed)))
 
                 # Batch update the row
                 self.service.spreadsheets().values().batchUpdate(

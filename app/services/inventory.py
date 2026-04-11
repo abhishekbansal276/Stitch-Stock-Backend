@@ -93,17 +93,50 @@ class InventoryService:
         # ── 2. PREPARE & MERGE DISTRIBUTIONS ──
         current_dists = existing_data.get('distributions', [])
         
-        # MERGE LOGIC: Combine incoming distributions with existing ones
+        # Calculate item-wide ratio for fallback calculations
+        # Handling "N/A" strings in total_qty and number_of_bags
+        raw_total_qty = existing_data.get('total_qty', 0)
+        raw_total_bags = existing_data.get('number_of_bags', 0)
+        
+        def _parse_val(v):
+            if str(v).strip().upper() == "N/A": return "N/A"
+            return safe_float(v)
+
+        # 1-pass calculation of global ratio from input + baseline
+        global_qty = _parse_val(total_qty)
+        global_bags = _parse_val(number_of_bags)
+        
+        ratio = 1.0
+        if isinstance(global_qty, (int, float)) and isinstance(global_bags, (int, float)):
+            if global_qty > 0 and global_bags > 0:
+                ratio = global_qty / global_bags
+            elif global_qty > 0 and global_bags == 0:
+                # If weight exists but bags is 0, ratio is essentially the weight per 1 (implied) bag
+                ratio = global_qty 
+
         merged_dists = current_dists.copy()
         for new_d in distributions:
             # Ensure incoming dist has an ID and a local batch reference
             batch_ref = new_d.get('batch_number') or batch_number or 'NB'
             if not new_d.get('dist_id') or new_d.get('dist_id') == 'AUTO':
-                # Deterministic seed based on product, location and batch
                 seed = f"{clean_code}-{new_d.get('warehouse')}-{new_d.get('location')}-{batch_ref}"
                 new_d['dist_id'] = generate_12_digit_hash(seed)
             
-            # If the incoming distribution doesn't have a batch, use the parent one
+            # [PRECISION-SYNC] Fill in missing metric if only one is provided
+            # if 'qty' is provided but 'bags' is missing (or vice-versa), use ratio
+            n_qty = _parse_val(new_d.get('qty', 0))
+            n_bags = _parse_val(new_d.get('bags', 0))
+
+            if n_bags == "N/A" or n_qty == "N/A":
+                pass # Keep as N/A
+            elif isinstance(n_qty, (int, float)) and n_qty > 0 and (not isinstance(n_bags, (int, float)) or n_bags <= 0):
+                n_bags = n_qty / ratio if ratio > 0 else 0
+            elif isinstance(n_bags, (int, float)) and n_bags > 0 and (not isinstance(n_qty, (int, float)) or n_qty <= 0):
+                n_qty = n_bags * ratio
+
+            new_d['qty'] = n_qty
+            new_d['bags'] = n_bags
+            
             if not new_d.get('batch_number') or str(new_d['batch_number']).strip() == "":
                 new_d['batch_number'] = batch_number
 
@@ -111,65 +144,62 @@ class InventoryService:
             for idx, old_d in enumerate(merged_dists):
                 if old_d.get('warehouse') == new_d.get('warehouse') and \
                    old_d.get('location') == new_d.get('location') and \
-                   old_d.get('batch_number') == new_d.get('batch_number'): # MATCH PER BATCH POSITION
+                   old_d.get('batch_number') == new_d.get('batch_number'):
                     found_idx = idx
                     break
             
             if found_idx >= 0:
-                merged_dists[found_idx]['qty'] = safe_float(merged_dists[found_idx].get('qty', 0)) + safe_float(new_d.get('qty', 0))
-                if 'bags' in new_d:
-                    old_bags = merged_dists[found_idx].get('bags', 0)
-                    new_bags = new_d.get('bags', 0)
-                    merged_dists[found_idx]['bags'] = safe_int(old_bags) + safe_int(new_bags)
+                # Merge logic handling N/A
+                o_qty = _parse_val(merged_dists[found_idx].get('qty', 0))
+                o_bags = _parse_val(merged_dists[found_idx].get('bags', 0))
+                
+                if n_qty == "N/A" or o_qty == "N/A": 
+                    merged_dists[found_idx]['qty'] = "N/A"
+                else: 
+                    merged_dists[found_idx]['qty'] = o_qty + n_qty
+                
+                if n_bags == "N/A" or o_bags == "N/A":
+                    merged_dists[found_idx]['bags'] = "N/A"
+                else:
+                    merged_dists[found_idx]['bags'] = safe_float(o_bags) + safe_float(n_bags)
             else:
                 merged_dists.append(new_d)
 
-        # ── 3. FINAL AUDIT & CONSOLIDATION: Merge distribution duplicates ──
+        # ── 3. FINAL AUDIT & CONSOLIDATION ──
         consolidated = {}
         for d in merged_dists:
-            u_type = str(d.get('unit_type', '')).lower()
-            is_bag_unit = 'bag' in u_type
-            
-            # [FIX] Consolidate: If unit is 'bags', only store 'qty'. 
-            # We preserve 'bags' only for items like KG where quantity != packaging count.
-            if is_bag_unit:
-                q_val = safe_float(d.get('qty', 0))
-                b_val = safe_float(d.get('bags', 0))
-                # Robustness: if qty is 0 but bags has data, pull it into qty
-                if q_val == 0 and b_val > 0: q_val = b_val
-                d['qty'] = q_val
-                if 'bags' in d: del d['bags']
-
-            # Identity key: Warehouse + Location + Batch
             key = f"{normalize_id(d.get('warehouse', 'WH'))}-{normalize_id(d.get('location', 'LOC'))}-{normalize_id(d.get('batch_number', 'NB'))}"
-            
             if key not in consolidated:
                 consolidated[key] = d
             else:
-                consolidated[key]['qty'] = safe_float(consolidated[key].get('qty', 0)) + safe_float(d.get('qty', 0))
-                # Only aggregate bags for non-bag unit types
-                if not is_bag_unit:
-                    consolidated[key]['bags'] = safe_int(consolidated[key].get('bags', 0)) + safe_int(d.get('bags', 0))
+                target = consolidated[key]
+                t_qty = _parse_val(target.get('qty', 0))
+                t_bags = _parse_val(target.get('bags', 0))
+                d_qty = _parse_val(d.get('qty', 0))
+                d_bags = _parse_val(d.get('bags', 0))
+
+                target['qty'] = "N/A" if (t_qty == "N/A" or d_qty == "N/A") else (t_qty + d_qty)
+                target['bags'] = "N/A" if (t_bags == "N/A" or d_bags == "N/A") else (safe_float(t_bags) + safe_float(d_bags))
         
         merged_dists = list(consolidated.values())
 
-        # Final audit for missing batch numbers and final bag-sync check after consolidation
-        for d in merged_dists:
-            if 'bag' in str(d.get('unit_type', '')).lower():
-                # Re-verify cleanup just in case of merge leftovers
-                if 'bags' in d: del d['bags']
-            if not d.get('batch_number') or str(d['batch_number']).strip() == "":
-                d['batch_number'] = batch_number or 'NB'
-
         # ── 3. FINALIZE DATA ──
-        total_qty = sum(safe_float(d.get('qty', 0)) for d in merged_dists)
-        
-        # [NEW] Total Bags Calculation: Derive from QTY if item is bag-based
-        is_item_bag_based = 'bag' in str(unit).lower() or storage_type == 'BAG'
-        if is_item_bag_based:
-            total_bags = total_qty
+        total_qty_list = [_parse_val(d.get('qty', 0)) for d in merged_dists]
+        total_bags_list = [_parse_val(d.get('bags', 0)) for d in merged_dists]
+
+        if any(v == "N/A" for v in total_qty_list):
+            calculated_total_qty = "N/A"
         else:
-            total_bags = sum(safe_int(d.get('bags', 0)) for d in merged_dists)
+            calculated_total_qty = sum(total_qty_list)
+
+        if any(v == "N/A" for v in total_bags_list):
+            calculated_total_bags = "N/A"
+        else:
+            calculated_total_bags = sum(total_bags_list)
+        
+        # Override with top-level explicit N/A if provided
+        final_total_qty = "N/A" if str(unit).upper() == "N/A" else calculated_total_qty
+        final_total_bags = "N/A" if str(number_of_bags).upper() == "N/A" else calculated_total_bags
         
         # Track all barcode IDs associated with this document
         barcode_ids = existing_data.get('barcode_ids', [])
@@ -186,20 +216,22 @@ class InventoryService:
                 if zn: search_locations.append(zn)
                 if wh and zn: search_locations.append(f"{wh} - {zn}")
 
+        is_item_bag_based = 'bag' in str(unit).lower() or storage_type == 'BAG'
+
         doc_data = {
             'doc_id': doc_ref.id, 
             'barcode_id': barcode_id, 
             'barcode_ids': barcode_ids,
             'product_name': product_name,
             'product_code': product_code,
-            'qty': total_qty, # Unified key
+            'qty': final_total_bags if is_item_bag_based else final_total_qty, # Unified key
             'distributions': merged_dists,
             'location_ids': list(set([l for l in search_locations if l])),
             'min_stock_level': existing_data.get('min_stock_level', 0),
             'supplier_name': supplier_name or existing_data.get('supplier_name') or 'N/A',
             'batch_number': 'AGGREGATED' if is_merged else (batch_number or existing_data.get('batch_number')),
             'storage_type': storage_type,
-            'number_of_bags': total_bags,
+            'number_of_bags': final_total_bags,
             'created_by': existing_data.get('created_by', user_name),
             'updated_by': user_name,
             'updated_at': int(time.time()),
@@ -214,11 +246,11 @@ class InventoryService:
         
         # [SCHEMA-STRICT] Remove redundant numeric field if identical
         if is_item_bag_based:
-            doc_data['total_qty'] = total_qty
+            doc_data['total_qty'] = final_total_bags
             if 'number_of_bags' in doc_data: del doc_data['number_of_bags']
         else:
-            doc_data['total_qty'] = total_qty
-            doc_data['number_of_bags'] = total_bags
+            doc_data['total_qty'] = final_total_qty
+            doc_data['number_of_bags'] = final_total_bags
         
         # If existing doc has a barcode link, keep it (unless we want to overwrite with newest)
         if existing_data.get('barcode_link'):

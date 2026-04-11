@@ -342,7 +342,10 @@ async def _process_async_ingestion(header: dict, items: list, item_ids: list, us
                     {'loc_id': 'default', 'loc_name': 'Main Floor', 'qty': item_data.get('Quantity Received (In Unit)') or item_data.get('Quantity Received', 0)}
                 ])
                 
-                # Returns deterministic doc_id, sets sync_status=pending
+                # Pass 'N/A' strings directly, otherwise convert to safe int
+                raw_bags_val = item_data.get('Number of Bags') or item_data.get('number_of_bags', 0)
+                final_bags_p = "N/A" if str(raw_bags_val).upper() == "N/A" else safe_int(raw_bags_val)
+
                 d_id = inventory_service.upsert_position(
                     barcode_id=item_id, 
                     product_name=item_data.get('Product Name'), 
@@ -352,7 +355,7 @@ async def _process_async_ingestion(header: dict, items: list, item_ids: list, us
                     supplier_name=header.get('Supplier Name'),
                     batch_number=item_data.get('batch_number') or item_data.get('Batch Number'),
                     storage_type=item_data.get('storage_type', 'UNIT'),
-                    number_of_bags=safe_int(item_data.get('number_of_bags') or item_data.get('Number of Bags', 0)),
+                    number_of_bags=final_bags_p,
                     user_name=user_display,
                     is_merged=item_data.get('is_merged', False)
                 )
