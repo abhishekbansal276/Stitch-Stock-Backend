@@ -454,8 +454,17 @@ class InventoryService:
         distributions = data.get('distributions', [])
         found = False
         
-        new_distributions = []
+        # [SAFETY-FALLBACK] Proportional Bag Deduction
+        # If bags_removed is missing but item has bag tracking, calculate it from global ratio
         is_item_bag_based = 'bag' in str(data.get('unit', '')).lower() or data.get('storage_type') == 'BAG'
+        if not is_item_bag_based and bags_removed <= 0:
+            total_qty = float(data.get('total_qty', 0))
+            total_bags = float(data.get('number_of_bags', 0))
+            if total_qty > 0 and total_bags > 0:
+                bags_removed = (qty / total_qty) * total_bags
+                print(f"⚖️ [BACKEND-PROPORTION] Calculated missing bags_removed: {bags_removed}")
+
+        new_distributions = []
         
         for dist in distributions:
             if dist.get('dist_id') == loc_id:
