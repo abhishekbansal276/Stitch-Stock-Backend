@@ -584,14 +584,22 @@ class InventoryService:
         unit = data.get('unit', 'Unit')
         is_qty_na = str(unit).upper() == "N/A"
         
+        # Helper for N/A-aware comparison
+        def is_low(val, threshold):
+            if str(val).strip().upper() == "N/A": return False
+            if threshold <= 0: return False
+            try:
+                return float(val) < float(threshold)
+            except: return False
+
         # Current State
-        is_qty_low = True if is_qty_na else (new_total < min_level)
-        is_bag_low = (new_bags < min_bag) if min_bag > 0 else True
+        is_qty_low = is_low(new_total, min_level)
+        is_bag_low = is_low(new_bags, min_bag)
         is_now_low = (is_qty_low and is_bag_low) if (min_level > 0 and min_bag > 0) else (is_qty_low if min_level > 0 else is_bag_low)
 
         # Previous State (for transition detection)
-        old_qty_low = True if is_qty_na else (old_total < min_level)
-        old_bag_low = (old_bags < min_bag) if min_bag > 0 else True
+        old_qty_low = is_low(old_total, min_level)
+        old_bag_low = is_low(old_bags, min_bag)
         was_low = (old_qty_low and old_bag_low) if (min_level > 0 and min_bag > 0) else (old_qty_low if min_level > 0 else old_bag_low)
 
         # Detailed Logging for Debugging
