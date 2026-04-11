@@ -454,15 +454,17 @@ class InventoryService:
         distributions = data.get('distributions', [])
         found = False
         
-        # [SAFETY-FALLBACK] Proportional Bag Deduction
-        # If bags_removed is missing but item has bag tracking, calculate it from global ratio
         is_item_bag_based = 'bag' in str(data.get('unit', '')).lower() or data.get('storage_type') == 'BAG'
+        print(f"📊 [BACKEND-CALC] Received for {doc_ref.id}: qty={qty}, bags_removed={bags_removed}, is_bag_based={is_item_bag_based}")
+        
         if not is_item_bag_based and bags_removed <= 0:
             total_qty = float(data.get('total_qty', 0))
             total_bags = float(data.get('number_of_bags', 0))
             if total_qty > 0 and total_bags > 0:
                 bags_removed = (qty / total_qty) * total_bags
-                print(f"⚖️ [BACKEND-PROPORTION] Calculated missing bags_removed: {bags_removed}")
+                print(f"⚖️ [BACKEND-CALC] Computed proportional bags: {bags_removed} (Ratio: {total_qty/total_bags if total_bags > 0 else 0})")
+            else:
+                print(f"⚠️ [BACKEND-CALC] Proportion skipped: total_qty={total_qty}, total_bags={total_bags}")
 
         new_distributions = []
         
@@ -571,7 +573,8 @@ class InventoryService:
             'location_ids': new_location_ids,
             'updated_at': int(time.time())
         })
-        return new_total
+        # Return both the new total and the effective bags removed (so callers can sync to sheets correctly)
+        return new_total, bags_removed
 
     def remove_stock_spatial(self, doc_id: str, loc_id: str, qty: float, user: dict = None, bags_removed: float = 0, skip_deduction: bool = False):
         """Wrapper to perform a safe atomic deduction or just an audit/alert check."""
@@ -586,8 +589,9 @@ class InventoryService:
         else:
             print(f"⚡ [DEDUCTION_MODE] Stock {doc_id} removal from location {loc_id}")
             transaction = db.transaction()
-            # We must pass the transaction object to the internal logic
-            new_total = self.deduct_from_location(transaction, doc_ref, loc_id, qty, bags_removed=bags_removed)
+            # FIX: Capture the return tuple to ensure calculated bags propagate to Sheets
+            new_total, bags_removed = self.deduct_from_location(transaction, doc_ref, loc_id, qty, bags_removed=bags_removed)
+            print(f"✅ [DEDUCTION_DONE] New Total: {new_total} | Effective Bags Removed: {bags_removed}")
         
         # ── RELIABLE HYBRID SYNC ──
         try:
