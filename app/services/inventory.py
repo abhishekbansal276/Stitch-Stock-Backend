@@ -16,7 +16,8 @@ class InventoryService:
     def upsert_position(self, barcode_id: str, product_name: str, product_code: str, 
                        unit: str, distributions: List[Dict], 
                        supplier_name: str = None, batch_number: str = None,
-                       storage_type: str = "UNIT", number_of_bags: int = 0,
+                       storage_type: str = "UNIT", number_of_bags: Any = 0,
+                       total_qty: Any = 0,
                        user_name: str = "System", is_merged: bool = False):
         """
         UPGRADED: One Doc per Product/Batch.

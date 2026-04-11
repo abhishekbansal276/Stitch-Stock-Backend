@@ -342,20 +342,24 @@ async def _process_async_ingestion(header: dict, items: list, item_ids: list, us
                     {'loc_id': 'default', 'loc_name': 'Main Floor', 'qty': item_data.get('Quantity Received (In Unit)') or item_data.get('Quantity Received', 0)}
                 ])
                 
-                # Pass 'N/A' strings directly, otherwise convert to safe int
+                # Pass 'N/A' strings directly, otherwise convert to safe numeric
                 raw_bags_val = item_data.get('Number of Bags') or item_data.get('number_of_bags', 0)
                 final_bags_p = "N/A" if str(raw_bags_val).upper() == "N/A" else safe_int(raw_bags_val)
+                
+                raw_qty_val = item_data.get('Quantity Received (In Unit)') or item_data.get('Quantity Received', 0)
+                final_qty_p = "N/A" if str(raw_qty_val).upper() == "N/A" else safe_float(raw_qty_val)
 
                 d_id = inventory_service.upsert_position(
                     barcode_id=item_id, 
                     product_name=item_data.get('Product Name'), 
                     product_code=item_data.get('Product Code'), 
                     unit=item_data.get('Unit', 'PCS'),
-                    distributions=distributions,
+                    distributions=distributions, 
                     supplier_name=header.get('Supplier Name'),
                     batch_number=item_data.get('batch_number') or item_data.get('Batch Number'),
                     storage_type=item_data.get('storage_type', 'UNIT'),
                     number_of_bags=final_bags_p,
+                    total_qty=final_qty_p,
                     user_name=user_display,
                     is_merged=item_data.get('is_merged', False)
                 )
