@@ -530,44 +530,46 @@ async def get_stock_item(
     if not item and not pos:
         raise HTTPException(status_code=404, detail="Stock item not found")
         
-        # Merge missing metadata from Firestore Source of Truth
-        if not item.get('supplier_name'):
-            item['supplier_name'] = pos.get('supplier_name')
-            
-        # 🚨 DEEP SEARCH: If still N/A and it's a merged doc, look for ANY batch with this supplier
-        if (not item.get('supplier_name') or item.get('supplier_name') == 'N/A') and pos.get('is_merged'):
-            try:
-                p_code = pos.get('product_code')
-                if p_code:
-                    batches = inventory_service.collection.where(filter=FieldFilter('product_code', '==', p_code))\
-                                                           .where(filter=FieldFilter('is_merged', '==', False))\
-                                                           .limit(1).get()
-                    if batches:
-                        item['supplier_name'] = batches[0].to_dict().get('supplier_name')
-            except: pass
-
-        if not item.get('batch_number'):
-            item['batch_number'] = pos.get('batch_number')
+    # --- METADATA ENRICHMENT (FIXED INDENTATION) ---
+    # Merge missing metadata from Firestore Source of Truth
+    if not item.get('supplier_name') or item.get('supplier_name') == 'N/A':
+        item['supplier_name'] = pos.get('supplier_name')
         
-        # 4. PROACTIVE BATCH DISCOVERY: Find all other batches for this product
-        # This makes the scanning response self-contained and resolves UI visibility issues.
-        p_code = item.get('product_code')
-        other_batches = []
-        if p_code:
-            try:
-                # Query all documents with the same product code
-                related_docs = inventory_service.collection.where(filter=FieldFilter('product_code', '==', p_code.strip().upper())).get()
-                for doc in related_docs:
-                    d_data = doc.to_dict()
-                    # Exclude the current primary document
-                    if d_data.get('doc_id') != item.get('doc_id'):
-                        other_batches.append(d_data)
-                
-                print(f"🔗 [BATCH-LINKING] Found {len(other_batches)} other batches for {p_code}")
-            except Exception as e:
-                print(f"⚠️ Batch Linking Error: {e}")
-                
-        item['other_batches'] = other_batches
+    # 🚨 DEEP SEARCH: If still N/A, look for ANY batch with this product code to find the supplier
+    if not item.get('supplier_name') or item.get('supplier_name') == 'N/A':
+        try:
+            p_code = item.get('product_code')
+            if p_code:
+                batches = inventory_service.collection.where(filter=FieldFilter('product_code', '==', p_code.strip().upper()))\
+                                                       .where(filter=FieldFilter('supplier_name', '!=', 'N/A'))\
+                                                       .limit(1).get()
+                if batches:
+                    item['supplier_name'] = batches[0].to_dict().get('supplier_name')
+        except: pass
+
+    if not item.get('batch_number'):
+        item['batch_number'] = pos.get('batch_number')
+    
+    # 4. PROACTIVE BATCH DISCOVERY: Find all other batches for this product
+    p_code = item.get('product_code')
+    other_batches = []
+    if p_code:
+        try:
+            # Query all documents with the same product code
+            related_docs = inventory_service.collection.where(filter=FieldFilter('product_code', '==', p_code.strip().upper())).get()
+            for doc in related_docs:
+                d_data = doc.to_dict()
+                # Exclude the current primary document
+                if d_data.get('doc_id') != item.get('doc_id'):
+                    other_batches.append(d_data)
+            
+            print(f"🔗 [BATCH-LINKING] Found {len(other_batches)} other batches for {p_code}")
+        except Exception as e:
+            print(f"⚠️ Batch Linking Error: {e}")
+            
+    item['other_batches'] = other_batches
+        
+    return item
         
     return item
 
