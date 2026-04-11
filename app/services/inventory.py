@@ -156,27 +156,29 @@ class InventoryService:
                 target = consolidated[key]
                 t_qty = _parse_val(target.get('qty', 0))
                 t_bags = _parse_val(target.get('bags', 0))
+                t_q_unit = _parse_val(target.get('qty_in_unit', 0))
+                
                 d_qty = _parse_val(d.get('qty', 0))
                 d_bags = _parse_val(d.get('bags', 0))
+                d_q_unit = _parse_val(d.get('qty_in_unit', 0))
 
                 target['qty'] = "N/A" if (t_qty == "N/A" or d_qty == "N/A") else (t_qty + d_qty)
                 target['bags'] = "N/A" if (t_bags == "N/A" or d_bags == "N/A") else (safe_float(t_bags) + safe_float(d_bags))
+                target['qty_in_unit'] = "N/A" if (t_q_unit == "N/A" or d_q_unit == "N/A") else (safe_float(t_q_unit) + safe_float(d_q_unit))
+                
+                # Ensure unit is preserved
+                if d.get('unit'): target['unit'] = d['unit']
         
         merged_dists = list(consolidated.values())
 
         # ── 3. FINALIZE DATA ──
         total_qty_list = [_parse_val(d.get('qty', 0)) for d in merged_dists]
         total_bags_list = [_parse_val(d.get('bags', 0)) for d in merged_dists]
+        total_unit_qty_list = [_parse_val(d.get('qty_in_unit', 0)) for d in merged_dists]
 
-        if any(v == "N/A" for v in total_qty_list):
-            calculated_total_qty = "N/A"
-        else:
-            calculated_total_qty = sum(total_qty_list)
-
-        if any(v == "N/A" for v in total_bags_list):
-            calculated_total_bags = "N/A"
-        else:
-            calculated_total_bags = sum(total_bags_list)
+        calculated_total_qty = "N/A" if any(v == "N/A" for v in total_qty_list) else sum(total_qty_list)
+        calculated_total_bags = "N/A" if any(v == "N/A" for v in total_bags_list) else sum(total_bags_list)
+        calculated_total_unit_qty = "N/A" if any(v == "N/A" for v in total_unit_qty_list) else sum(total_unit_qty_list)
         
         # Determine final N/A states from explicit top-level flags
         final_total_qty = "N/A" if str(total_qty).upper() == "N/A" else calculated_total_qty
@@ -217,6 +219,7 @@ class InventoryService:
             'product_code': product_code,
             'total_qty': final_total_qty,        # Raw state (numeric or N/A)
             'number_of_bags': final_total_bags,  # Raw state (numeric or N/A)
+            'total_qty_in_unit': calculated_total_unit_qty,
             'qty': display_qty,                  # Unified display key
             'unit': display_unit,                # Integrated display unit
             'distributions': merged_dists,
@@ -486,6 +489,12 @@ class InventoryService:
             if dist.get('dist_id') == loc_id:
                 curr_qty = float(dist.get('qty', 0))
                 curr_bags = float(dist.get('bags', 0)) if 'bags' in dist else 0.0
+                curr_item_unit_qty = float(dist.get('qty_in_unit', 0))
+                
+                # Proportional unit qty deduction
+                unit_qty_removed = 0.0
+                if curr_qty > 0:
+                    unit_qty_removed = (qty / curr_qty) * curr_item_unit_qty
                 
                 # Safety: can't deduct more than available
                 if curr_qty < qty - 0.001:
@@ -496,6 +505,10 @@ class InventoryService:
                 # Deduct bags proportionally (only if the dist tracks bags)
                 if 'bags' in dist:
                     dist['bags'] = max(0.0, float(curr_bags - bags_removed))
+                
+                # Deduct unit qty
+                if 'qty_in_unit' in dist:
+                    dist['qty_in_unit'] = max(0.0, float(curr_item_unit_qty - unit_qty_removed))
                     
                 found = True
             new_distributions.append(dist)
@@ -579,6 +592,7 @@ class InventoryService:
             'total_qty': float(new_total),
             'qty': float(new_total),
             'number_of_bags': float(new_bags),
+            'total_qty_in_unit': sum(safe_float(d.get('qty_in_unit', 0)) for d in new_distributions),
             'location_ids': new_location_ids,
             'updated_at': int(time.time())
         })
@@ -740,16 +754,25 @@ class InventoryService:
         dest_found = False
         new_distributions = []
         
-        # 1. Determine bags to move (only if bags exist in source)
+        # 1. Determine unit qty and bags to move
         source_dist = next((d for d in distributions if d.get('dist_id') == from_dist_id), None)
         bags_to_move = float(bags) if bags > 0 else 0
+        moving_unit_qty = 0.0
         
-        if bags_to_move <= 0 and source_dist:
+        if source_dist:
             s_qty = float(source_dist.get('qty', 0))
+            s_unit_qty = float(source_dist.get('qty_in_unit', 0))
             s_bags = float(source_dist.get('bags', 0)) if 'bags' in source_dist else 0.0
-            if s_qty > 0 and s_bags > 0:
+            
+            # Proportional Bags
+            if bags_to_move <= 0 and s_qty > 0 and s_bags > 0:
                 bags_to_move = round((qty / s_qty) * s_bags, 4)
                 bags_to_move = min(bags_to_move, s_bags)
+
+            # Proportional Unit Qty (Weight)
+            if s_qty > 0:
+                moving_unit_qty = round((qty / s_qty) * s_unit_qty, 6)
+                moving_unit_qty = min(moving_unit_qty, s_unit_qty)
         
         # 2. Execute movement within distributions
         for dist in distributions:
@@ -767,6 +790,9 @@ class InventoryService:
                 if 'bags' in dist:
                     dist['bags'] = max(0.0, float(dist.get('bags', 0)) - bags_to_move)
                 
+                if 'qty_in_unit' in dist:
+                    dist['qty_in_unit'] = max(0.0, float(dist.get('qty_in_unit', 0)) - moving_unit_qty)
+                
                 source_found = True
             
             elif dist.get('warehouse') == to_warehouse and dist.get('location') == to_location:
@@ -775,6 +801,8 @@ class InventoryService:
                     dist['qty'] = float(d_qty_val) + qty
                 if 'bags' in dist:
                     dist['bags'] = float(dist.get('bags', 0)) + bags_to_move
+                if 'qty_in_unit' in dist:
+                    dist['qty_in_unit'] = float(dist.get('qty_in_unit', 0)) + moving_unit_qty
                 dest_found = True
             
             new_distributions.append(dist)
@@ -798,7 +826,9 @@ class InventoryService:
                 'qty': final_qty, 
                 'dist_id': new_dist_id,
                 'batch_number': batch_ref,
-                'unit_type': unit_type
+                'unit_type': unit_type,
+                'unit': source_dist.get('unit'),
+                'qty_in_unit': moving_unit_qty
             }
             # Only add bags to new dist if the source tracked bags
             if source_dist and 'bags' in source_dist:
@@ -848,6 +878,7 @@ class InventoryService:
             'total_qty': "N/A" if is_qty_na else new_total_qty,
             'qty': display_qty,
             'number_of_bags': new_total_bags,
+            'total_qty_in_unit': sum(safe_float(d.get('qty_in_unit', 0)) for d in cleaned_distributions),
             'updated_at': int(time.time())
         }
         transaction.update(doc_ref, update_map)
