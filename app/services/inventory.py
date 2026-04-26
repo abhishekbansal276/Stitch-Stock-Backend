@@ -734,24 +734,31 @@ class InventoryService:
         return list(zones.values())
 
     def get_inventory_summary(self) -> List[Dict]:
-        """God View: Returns ALL products and where they are located."""
-        docs = self.collection.stream()
-        items = []
-        for doc in docs:
-            data = doc.to_dict()
-            items.append({
-                'barcode_id': data['barcode_id'],
-                'doc_id': doc.id,
-                'product_name': data['product_name'],
-                'product_code': data['product_code'],
-                'total_qty': data['total_qty'],
-                'unit': data['unit'],
-                'updated_at': data.get('updated_at'),
-                'min_stock_level': data.get('min_stock_level', 0),
-                'barcode_link': data.get('barcode_link'),
-                'distributions': data.get('distributions', [])
-            })
-        return items
+        """God View: Returns ALL products and their locations."""
+        try:
+            docs = self.collection.stream()
+            items = []
+            for doc in docs:
+                data = doc.to_dict()
+                if not data: continue
+                
+                # Inject doc_id
+                data['doc_id'] = doc.id
+                
+                # Ensure essential keys exist for Flutter compatibility (prevent crashes)
+                if 'barcode_id' not in data: data['barcode_id'] = doc.id
+                if 'product_name' not in data: data['product_name'] = data.get('item_name', 'Unknown Item')
+                if 'product_code' not in data: data['product_code'] = 'N/A'
+                if 'total_qty' not in data: data['total_qty'] = 0
+                if 'unit' not in data: data['unit'] = 'PCS'
+                if 'distributions' not in data: data['distributions'] = []
+                if 'sync_status' not in data: data['sync_status'] = 'synced'
+                
+                items.append(data)
+            return items
+        except Exception as e:
+            print(f"❌ Critical Error in get_inventory_summary: {e}")
+            return []
 
     def set_min_stock_level(self, doc_id: str, min_level: float, min_bag: float = 0.0):
         """Admin override for threshold alerts (Quantity and Bags)."""
